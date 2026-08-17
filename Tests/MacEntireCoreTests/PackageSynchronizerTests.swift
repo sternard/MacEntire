@@ -40,7 +40,9 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronize(package)
 
-        XCTAssertTrue(git.commands.contains { $0.suffix(3) == ["fetch", "origin", "main"] })
+        XCTAssertTrue(git.commands.contains {
+            $0.suffix(3) == ["fetch", "origin", "refs/heads/main"]
+        })
         XCTAssertTrue(git.commands.contains {
             $0.suffix(4) == ["merge", "--ff-only", "--no-overwrite-ignore", "FETCH_HEAD"]
         })
@@ -57,7 +59,9 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronize(package)
 
-        XCTAssertTrue(git.commands.contains { $0.suffix(3) == ["fetch", "origin", "develop"] })
+        XCTAssertTrue(git.commands.contains {
+            $0.suffix(3) == ["fetch", "origin", "refs/heads/develop"]
+        })
         XCTAssertTrue(git.commands.contains {
             $0.suffix(4) == ["merge", "--ff-only", "--no-overwrite-ignore", "FETCH_HEAD"]
         })

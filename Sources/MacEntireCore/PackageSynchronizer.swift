@@ -156,7 +156,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
             let branch = package.branch ?? currentBranch
             _ = try gitRunner.run(
-                ["-C", package.directoryURL.path, "fetch", "origin", branch],
+                ["-C", package.directoryURL.path, "fetch", "origin", "refs/heads/\(branch)"],
                 description: "Fetch \(package.repositoryName)"
             )
             _ = try gitRunner.run(
