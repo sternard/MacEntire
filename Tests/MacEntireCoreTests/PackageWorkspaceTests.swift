@@ -38,6 +38,18 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertFalse(package.isLaunchEnabled(whileSynchronizing: true))
     }
 
+    func testSynchronizationIsBlockedWhileLauncherIsActive() {
+        var operations = PackageOperationState()
+
+        XCTAssertTrue(operations.beginLaunch())
+        XCTAssertFalse(operations.canSynchronize)
+        XCTAssertFalse(operations.beginSynchronization())
+
+        operations.endLaunch()
+        XCTAssertTrue(operations.beginSynchronization())
+        XCTAssertFalse(operations.beginLaunch())
+    }
+
     func testUnavailablePackageDisplayTitleIncludesReason() {
         let definition = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Storage-Assistant")!,

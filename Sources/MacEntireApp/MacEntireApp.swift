@@ -49,7 +49,7 @@ private struct PackageMenu: View {
             } label: {
                 Label(catalog.isSynchronizing ? "Syncing Packages…" : "Sync Packages", systemImage: "arrow.triangle.2.circlepath")
             }
-            .disabled(catalog.isSynchronizing)
+            .disabled(!catalog.canSynchronize)
 
             Button {
                 catalog.openPackagesDirectory()
@@ -148,8 +148,16 @@ private final class LoginItemController: ObservableObject {
 @MainActor
 private final class PackageCatalog: ObservableObject {
     @Published private(set) var packages: [ManagedPackage] = []
-    @Published private(set) var isSynchronizing = false
     @Published private(set) var statusMessage: String?
+    @Published private var operationState = PackageOperationState()
+
+    var isSynchronizing: Bool {
+        operationState.isSynchronizing
+    }
+
+    var canSynchronize: Bool {
+        operationState.canSynchronize
+    }
 
     private let workspace: PackageWorkspace
     private let synchronizer: PackageSynchronizer
@@ -177,11 +185,10 @@ private final class PackageCatalog: ObservableObject {
     }
 
     func synchronize() {
-        guard !isSynchronizing else {
+        guard operationState.beginSynchronization() else {
             return
         }
 
-        isSynchronizing = true
         statusMessage = "Syncing packages…"
         let synchronizer = synchronizer
 
@@ -190,7 +197,7 @@ private final class PackageCatalog: ObservableObject {
                 Result { try synchronizer.synchronizeAll() }
             }.value
 
-            isSynchronizing = false
+            operationState.endSynchronization()
             switch result {
             case .success(let results):
                 let failures = results.filter { !$0.succeeded }
@@ -209,17 +216,25 @@ private final class PackageCatalog: ObservableObject {
     }
 
     func launch(_ package: PackageDefinition) {
+        guard operationState.beginLaunch() else {
+            return
+        }
+
         do {
             try launcher.launch(package) { [weak self] result in
-                guard case .failure(let error) = result else {
-                    return
-                }
                 Task { @MainActor [weak self] in
-                    self?.statusMessage = error.localizedDescription
+                    guard let self else {
+                        return
+                    }
+                    operationState.endLaunch()
+                    if case .failure(let error) = result {
+                        statusMessage = error.localizedDescription
+                    }
                 }
             }
             statusMessage = "Launching \(package.displayName)…"
         } catch {
+            operationState.endLaunch()
             statusMessage = "Could not launch \(package.displayName): \(error.localizedDescription)"
         }
     }

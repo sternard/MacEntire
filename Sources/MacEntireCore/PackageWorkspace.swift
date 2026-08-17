@@ -6,6 +6,41 @@ public enum PackageState: Equatable, Sendable {
     case unavailable(String)
 }
 
+public struct PackageOperationState: Equatable, Sendable {
+    public private(set) var isSynchronizing = false
+    public private(set) var activeLauncherCount = 0
+
+    public var canSynchronize: Bool {
+        !isSynchronizing && activeLauncherCount == 0
+    }
+
+    public init() {}
+
+    public mutating func beginSynchronization() -> Bool {
+        guard canSynchronize else {
+            return false
+        }
+        isSynchronizing = true
+        return true
+    }
+
+    public mutating func endSynchronization() {
+        isSynchronizing = false
+    }
+
+    public mutating func beginLaunch() -> Bool {
+        guard !isSynchronizing else {
+            return false
+        }
+        activeLauncherCount += 1
+        return true
+    }
+
+    public mutating func endLaunch() {
+        activeLauncherCount = max(activeLauncherCount - 1, 0)
+    }
+}
+
 public struct ManagedPackage: Identifiable, Equatable, Sendable {
     public let definition: PackageDefinition
     public let state: PackageState
