@@ -187,6 +187,34 @@ final class PackageSynchronizerTests: XCTestCase {
         })
     }
 
+    func testRefusesSymlinkedCheckoutDirectory() throws {
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let externalDirectory = temporaryRoot.appendingPathComponent("External-Example-App", isDirectory: true)
+        let checkoutDirectory = packagesDirectory.appendingPathComponent("Example-App", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: externalDirectory.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(at: packagesDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(at: checkoutDirectory, withDestinationURL: externalDirectory)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: checkoutDirectory
+        )
+        let git = FakeGitRunner(statusOutput: "")
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, .symbolicLinkCheckout("Example-App"))
+        }
+        XCTAssertTrue(git.commands.isEmpty)
+    }
+
     func testRefusesLauncherDirectory() throws {
         let package = try makeInstalledPackage()
         try FileManager.default.removeItem(at: package.launcherURL)

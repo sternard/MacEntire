@@ -53,6 +53,14 @@ public struct PackageWorkspace: Sendable {
         gitRunner: any GitRunning = ProcessGitRunner()
     ) throws -> [ManagedPackage] {
         try definitions().map { definition in
+            guard !isSymbolicLink(at: definition.directoryURL, fileManager: fileManager) else {
+                let error = PackageSyncError.symbolicLinkCheckout(definition.repositoryName)
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: definition.directoryURL.path, isDirectory: &isDirectory) else {
                 return ManagedPackage(definition: definition, state: .notInstalled)
@@ -145,4 +153,8 @@ public struct PackageWorkspace: Sendable {
             return ManagedPackage(definition: definition, state: .ready)
         }
     }
+}
+
+func isSymbolicLink(at url: URL, fileManager: FileManager = .default) -> Bool {
+    (try? fileManager.destinationOfSymbolicLink(atPath: url.path)) != nil
 }

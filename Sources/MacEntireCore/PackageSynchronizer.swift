@@ -16,6 +16,7 @@ public struct PackageSyncResult: Equatable, Sendable {
 
 public enum PackageSyncError: LocalizedError, Equatable {
     case destinationIsNotRepository(String)
+    case symbolicLinkCheckout(String)
     case remoteMismatch(expected: String, actual: String)
     case branchMismatch(repository: String, expected: String, actual: String)
     case detachedHead(String)
@@ -27,6 +28,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
         switch self {
         case .destinationIsNotRepository(let name):
             return "\(name) already exists but is not a Git repository."
+        case .symbolicLinkCheckout(let name):
+            return "\(name) checkout path is a symbolic link."
         case .remoteMismatch(let expected, let actual):
             return "Origin is \(actual), expected \(expected)."
         case .branchMismatch(let repository, let expected, let actual):
@@ -107,6 +110,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
             at: workspace.packagesDirectory,
             withIntermediateDirectories: true
         )
+
+        guard !isSymbolicLink(at: package.directoryURL) else {
+            throw PackageSyncError.symbolicLinkCheckout(package.repositoryName)
+        }
 
         var isDirectory: ObjCBool = false
         if FileManager.default.fileExists(atPath: package.directoryURL.path, isDirectory: &isDirectory) {

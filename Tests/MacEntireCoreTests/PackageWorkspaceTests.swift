@@ -94,6 +94,36 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testReportsSymlinkedCheckoutDirectoryAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let externalDirectory = temporaryRoot.appendingPathComponent("External-Storage-Assistant", isDirectory: true)
+        let checkoutDirectory = packagesDirectory.appendingPathComponent("Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: externalDirectory.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: externalDirectory.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "#!/usr/bin/env bash\n".write(
+            to: externalDirectory.appendingPathComponent("scripts/run-app.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.createSymbolicLink(at: checkoutDirectory, withDestinationURL: externalDirectory)
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner()
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("Storage-Assistant checkout path is a symbolic link.")
+        )
+    }
+
     func testReportsRepositoryOnWrongConfiguredBranchAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant -b develop")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
