@@ -75,6 +75,22 @@ final class PackageListTests: XCTestCase {
         }
     }
 
+    func testRejectsTrackedMarkerFilenameAsDestination() {
+        let entries = [
+            "https://github.com/sternard/.gitkeep",
+            "https://github.com/sternard/.gitkeep.git",
+            "https://github.com/sternard/.GITKEEP"
+        ]
+
+        for entry in entries {
+            XCTAssertThrowsError(
+                try PackageListParser().parse(entry, packagesDirectory: packagesDirectory)
+            ) { error in
+                XCTAssertEqual(error as? PackageListError, .invalidEntry(line: 1, value: entry))
+            }
+        }
+    }
+
     func testRejectsDuplicateDestinationNames() {
         let contents = """
         https://github.com/first/Example-App

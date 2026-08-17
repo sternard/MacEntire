@@ -49,6 +49,10 @@ public enum PackageListError: LocalizedError, Equatable {
 
 public struct PackageListParser: Sendable {
     static let packageListFilename = "packages.txt"
+    private static let reservedPackageDirectoryNames: Set<String> = [
+        packageListFilename,
+        ".gitkeep"
+    ]
 
     public init() {}
 
@@ -72,7 +76,7 @@ public struct PackageListParser: Sendable {
             }
 
             let normalizedDirectoryName = parsed.repositoryName.lowercased()
-            guard normalizedDirectoryName != Self.packageListFilename else {
+            guard !Self.reservedPackageDirectoryNames.contains(normalizedDirectoryName) else {
                 throw PackageListError.invalidEntry(line: lineNumber, value: line)
             }
 
