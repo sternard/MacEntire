@@ -223,6 +223,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
             throw PackageSyncError.macEntireIsNotRepository
         }
 
+        let fileManager = FileManager.default
+        let preservedPackageListLinkDestination = try? fileManager.destinationOfSymbolicLink(
+            atPath: workspace.packageListURL.path
+        )
         let preservedPackageList: Data
         do {
             preservedPackageList = try Data(contentsOf: workspace.packageListURL)
@@ -267,11 +271,24 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
         var restorationError: Error?
         do {
-            try FileManager.default.createDirectory(
+            try fileManager.createDirectory(
                 at: workspace.packagesDirectory,
                 withIntermediateDirectories: true
             )
-            try preservedPackageList.write(to: workspace.packageListURL, options: .atomic)
+            if let preservedPackageListLinkDestination {
+                if
+                    fileManager.fileExists(atPath: workspace.packageListURL.path)
+                        || isSymbolicLink(at: workspace.packageListURL, fileManager: fileManager)
+                {
+                    try fileManager.removeItem(at: workspace.packageListURL)
+                }
+                try fileManager.createSymbolicLink(
+                    atPath: workspace.packageListURL.path,
+                    withDestinationPath: preservedPackageListLinkDestination
+                )
+            } else {
+                try preservedPackageList.write(to: workspace.packageListURL, options: .atomic)
+            }
         } catch {
             restorationError = error
         }

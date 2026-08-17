@@ -201,6 +201,51 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
     }
 
+    func testMacEntireUpdatePreservesSymlinkedPackageListWhenUpdateFails() throws {
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: packagesDirectory,
+            withIntermediateDirectories: true
+        )
+        let externalPackageList = temporaryRoot.appendingPathComponent("custom-packages.txt")
+        try "custom package list\n".write(
+            to: externalPackageList,
+            atomically: true,
+            encoding: .utf8
+        )
+        let packageList = packagesDirectory.appendingPathComponent("packages.txt")
+        let linkDestination = "../custom-packages.txt"
+        try FileManager.default.createSymbolicLink(
+            atPath: packageList.path,
+            withDestinationPath: linkDestination
+        )
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "partially updated package list\n",
+            updateError: .commandFailed(command: "Update MacEntire", output: "network unavailable")
+        )
+
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronizeMacEntire()) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .commandFailed(command: "Update MacEntire", output: "network unavailable")
+            )
+        }
+
+        XCTAssertEqual(
+            try FileManager.default.destinationOfSymbolicLink(atPath: packageList.path),
+            linkDestination
+        )
+        XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
+        XCTAssertEqual(try String(contentsOf: externalPackageList), "custom package list\n")
+    }
+
     func testMacEntireUpdateRefusesToPullFromParentRepository() throws {
         _ = try writePackageList("custom package list\n")
         let parentRoot = temporaryRoot.deletingLastPathComponent()
