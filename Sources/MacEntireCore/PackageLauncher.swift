@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public enum PackageLaunchError: LocalizedError, Equatable, Sendable {
@@ -98,7 +99,7 @@ public final class PackageLauncher: @unchecked Sendable {
             completion(.failure(.unsuccessfulExit(
                 package: package.displayName,
                 status: process.terminationStatus,
-                output: outputCapture.string
+                output: outputCapture.finalString()
             )))
         }
 
@@ -148,23 +149,31 @@ private final class LauncherOutputCapture: @unchecked Sendable {
     let pipe = Pipe()
 
     private let output: BoundedProcessOutput
+    private let readLock = NSLock()
+    private let onEnd: @Sendable () -> Void
+    private var didEnd = false
 
     init(maximumBytes: Int, onEnd: @escaping @Sendable () -> Void) {
         output = BoundedProcessOutput(maximumBytes: maximumBytes)
-        pipe.fileHandleForReading.readabilityHandler = { [output] handle in
-            let data = handle.availableData
-            guard !data.isEmpty else {
-                handle.readabilityHandler = nil
-                try? handle.close()
-                onEnd()
-                return
-            }
-            output.append(data)
+        self.onEnd = onEnd
+        let descriptor = pipe.fileHandleForReading.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags >= 0 {
+            _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+        }
+        pipe.fileHandleForReading.readabilityHandler = { [weak self] _ in
+            self?.drainAvailableOutput()
         }
     }
 
-    var string: String {
-        output.string
+    func finalString() -> String {
+        let shouldFinish = drainAvailableOutputLocked()
+        let string = output.string
+        readLock.unlock()
+        if shouldFinish {
+            finish()
+        }
+        return string
     }
 
     func closeParentWriter() {
@@ -172,8 +181,53 @@ private final class LauncherOutputCapture: @unchecked Sendable {
     }
 
     func cancel() {
+        readLock.lock()
+        didEnd = true
+        readLock.unlock()
         pipe.fileHandleForReading.readabilityHandler = nil
         try? pipe.fileHandleForReading.close()
         try? pipe.fileHandleForWriting.close()
+    }
+
+    private func drainAvailableOutput() {
+        let shouldFinish = drainAvailableOutputLocked()
+        readLock.unlock()
+        if shouldFinish {
+            finish()
+        }
+    }
+
+    private func drainAvailableOutputLocked() -> Bool {
+        readLock.lock()
+        guard !didEnd else {
+            return false
+        }
+
+        let descriptor = pipe.fileHandleForReading.fileDescriptor
+        var buffer = [UInt8](repeating: 0, count: 8 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count > 0 {
+                output.append(Data(buffer.prefix(count)))
+                continue
+            }
+            if count == 0 {
+                didEnd = true
+                return true
+            }
+            if errno == EAGAIN || errno == EWOULDBLOCK {
+                return false
+            }
+            didEnd = true
+            return true
+        }
+    }
+
+    private func finish() {
+        pipe.fileHandleForReading.readabilityHandler = nil
+        try? pipe.fileHandleForReading.close()
+        onEnd()
     }
 }
