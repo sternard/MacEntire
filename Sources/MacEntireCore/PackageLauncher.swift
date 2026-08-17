@@ -69,6 +69,7 @@ public final class PackageLauncher: @unchecked Sendable {
 
     private let lock = NSLock()
     private var runningProcesses: [UUID: Process] = [:]
+    private var outputCaptures: [UUID: LauncherOutputCapture] = [:]
 
     public init() {}
 
@@ -77,27 +78,16 @@ public final class PackageLauncher: @unchecked Sendable {
         completion: @escaping @Sendable (Result<Void, PackageLaunchError>) -> Void
     ) throws {
         let identifier = UUID()
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MacEntireLauncher-\(identifier.uuidString).log", isDirectory: false)
-        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil) else {
-            throw CocoaError(.fileWriteUnknown)
+        let outputCapture = LauncherOutputCapture(maximumBytes: Self.maximumCapturedOutputBytes) { [weak self] in
+            self?.removeOutputCapture(identifier)
         }
-
-        let outputHandle = try FileHandle(forWritingTo: outputURL)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [
-            "-o", "pipefail", "-c",
-            "\"$@\" 2>&1 | /usr/bin/tail -c \(Self.maximumCapturedOutputBytes)",
-            "macentire-launcher", "/bin/bash", package.launcherURL.path
-        ]
+        process.arguments = [package.launcherURL.path]
         process.currentDirectoryURL = package.directoryURL
-        process.standardOutput = outputHandle
-        process.standardError = outputHandle
+        process.standardOutput = outputCapture.pipe
+        process.standardError = outputCapture.pipe
         process.terminationHandler = { [weak self] process in
-            try? outputHandle.close()
-            let data = (try? Data(contentsOf: outputURL)) ?? Data()
-            try? FileManager.default.removeItem(at: outputURL)
             self?.removeProcess(identifier)
 
             guard process.terminationStatus != 0 else {
@@ -105,29 +95,31 @@ public final class PackageLauncher: @unchecked Sendable {
                 return
             }
 
-            let output = String(decoding: data, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
             completion(.failure(.unsuccessfulExit(
                 package: package.displayName,
                 status: process.terminationStatus,
-                output: output
+                output: outputCapture.string
             )))
         }
 
-        storeProcess(process, identifier: identifier)
+        storeProcess(process, outputCapture: outputCapture, identifier: identifier)
         do {
             try process.run()
+            outputCapture.closeParentWriter()
         } catch {
-            removeProcess(identifier)
-            try? outputHandle.close()
-            try? FileManager.default.removeItem(at: outputURL)
+            removeProcessAndOutputCapture(identifier)
             throw error
         }
     }
 
-    private func storeProcess(_ process: Process, identifier: UUID) {
+    private func storeProcess(
+        _ process: Process,
+        outputCapture: LauncherOutputCapture,
+        identifier: UUID
+    ) {
         lock.lock()
         runningProcesses[identifier] = process
+        outputCaptures[identifier] = outputCapture
         lock.unlock()
     }
 
@@ -135,5 +127,53 @@ public final class PackageLauncher: @unchecked Sendable {
         lock.lock()
         runningProcesses[identifier] = nil
         lock.unlock()
+    }
+
+    private func removeOutputCapture(_ identifier: UUID) {
+        lock.lock()
+        outputCaptures[identifier] = nil
+        lock.unlock()
+    }
+
+    private func removeProcessAndOutputCapture(_ identifier: UUID) {
+        lock.lock()
+        runningProcesses[identifier] = nil
+        let outputCapture = outputCaptures.removeValue(forKey: identifier)
+        lock.unlock()
+        outputCapture?.cancel()
+    }
+}
+
+private final class LauncherOutputCapture: @unchecked Sendable {
+    let pipe = Pipe()
+
+    private let output: BoundedProcessOutput
+
+    init(maximumBytes: Int, onEnd: @escaping @Sendable () -> Void) {
+        output = BoundedProcessOutput(maximumBytes: maximumBytes)
+        pipe.fileHandleForReading.readabilityHandler = { [output] handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                try? handle.close()
+                onEnd()
+                return
+            }
+            output.append(data)
+        }
+    }
+
+    var string: String {
+        output.string
+    }
+
+    func closeParentWriter() {
+        try? pipe.fileHandleForWriting.close()
+    }
+
+    func cancel() {
+        pipe.fileHandleForReading.readabilityHandler = nil
+        try? pipe.fileHandleForReading.close()
+        try? pipe.fileHandleForWriting.close()
     }
 }

@@ -122,6 +122,36 @@ final class PackageLauncherTests: XCTestCase {
         XCTAssertTrue(output.hasSuffix("TAIL-MARKER"))
         XCTAssertLessThanOrEqual(output.utf8.count, PackageLauncher.maximumCapturedOutputBytes)
     }
+
+    func testCompletionDoesNotWaitForBackgroundDescendantsToCloseOutput() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
+        let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
+        try "/bin/sleep 2 &\nexit 0\n".write(
+            to: launcherURL,
+            atomically: true,
+            encoding: .utf8
+        )
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: temporaryRoot
+        )
+        let completionExpectation = expectation(description: "Launcher completion")
+        let start = Date()
+
+        try PackageLauncher().launch(package) { _ in
+            completionExpectation.fulfill()
+        }
+
+        wait(for: [completionExpectation], timeout: 1)
+        XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+    }
 }
 
 private final class LockedBox<Value>: @unchecked Sendable {

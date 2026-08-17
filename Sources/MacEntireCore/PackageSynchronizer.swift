@@ -146,7 +146,7 @@ public struct ProcessGitRunner: GitRunning, Sendable {
     }
 }
 
-private final class BoundedProcessOutput: @unchecked Sendable {
+final class BoundedProcessOutput: @unchecked Sendable {
     private let maximumBytes: Int
     private let lock = NSLock()
     private var data = Data()
