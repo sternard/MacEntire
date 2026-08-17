@@ -29,6 +29,7 @@ public func packageLaunchCompletionMessage(
 public struct PackageLaunchStatusState: Equatable, Sendable {
     private var launchOrder: [UUID] = []
     private var messages: [UUID: String] = [:]
+    private var packageNames: [UUID: String] = [:]
 
     public var message: String? {
         launchOrder.reversed().compactMap { messages[$0] }.first
@@ -38,9 +39,14 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
 
     @discardableResult
     public mutating func beginLaunch(packageName: String, identifier: UUID = UUID()) -> UUID {
+        let supersededLaunches = launchOrder.filter { packageNames[$0] == packageName }
+        for supersededIdentifier in supersededLaunches {
+            removeLaunch(supersededIdentifier)
+        }
         launchOrder.removeAll { $0 == identifier }
         launchOrder.append(identifier)
         messages[identifier] = "Launching \(packageName)…"
+        packageNames[identifier] = packageName
         return identifier
     }
 
@@ -48,6 +54,9 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
         identifier: UUID,
         result: Result<Void, PackageLaunchError>
     ) {
+        guard packageNames[identifier] != nil else {
+            return
+        }
         if let message = packageLaunchCompletionMessage(for: result) {
             messages[identifier] = message
         } else {
@@ -56,11 +65,15 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
     }
 
     public mutating func failToStart(identifier: UUID, message: String) {
+        guard packageNames[identifier] != nil else {
+            return
+        }
         messages[identifier] = message
     }
 
     private mutating func removeLaunch(_ identifier: UUID) {
         messages[identifier] = nil
+        packageNames[identifier] = nil
         launchOrder.removeAll { $0 == identifier }
     }
 }
