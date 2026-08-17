@@ -240,6 +240,33 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testReportsDetachedRepositoryWithoutConfiguredBranchAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "#!/usr/bin/env bash\n".write(
+            to: repository.appendingPathComponent("scripts/run-app.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(currentBranch: "")
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("Storage-Assistant has a detached HEAD; update skipped.")
+        )
+    }
+
     func testReportsRepositoryWithoutLauncherAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         try FileManager.default.createDirectory(

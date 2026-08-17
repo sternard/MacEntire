@@ -186,28 +186,28 @@ public struct PackageWorkspace: Sendable {
                 )
             }
 
+            let currentBranch: String
+            do {
+                currentBranch = try gitRunner.run(
+                    ["-C", definition.directoryURL.path, "branch", "--show-current"],
+                    description: "Read \(definition.repositoryName) branch"
+                )
+            } catch {
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
+            guard !currentBranch.isEmpty else {
+                let error = PackageSyncError.detachedHead(definition.repositoryName)
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
             if let expectedBranch = definition.branch {
-                let currentBranch: String
-                do {
-                    currentBranch = try gitRunner.run(
-                        ["-C", definition.directoryURL.path, "branch", "--show-current"],
-                        description: "Read \(definition.repositoryName) branch"
-                    )
-                } catch {
-                    return ManagedPackage(
-                        definition: definition,
-                        state: .unavailable(error.localizedDescription)
-                    )
-                }
-
-                guard !currentBranch.isEmpty else {
-                    let error = PackageSyncError.detachedHead(definition.repositoryName)
-                    return ManagedPackage(
-                        definition: definition,
-                        state: .unavailable(error.localizedDescription)
-                    )
-                }
-
                 guard currentBranch == expectedBranch else {
                     let error = PackageSyncError.branchMismatch(
                         repository: definition.repositoryName,
