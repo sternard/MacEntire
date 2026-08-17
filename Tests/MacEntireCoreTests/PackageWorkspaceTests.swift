@@ -81,6 +81,33 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testReportsRepositoryOnWrongConfiguredBranchAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant -b develop")
+        let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "#!/usr/bin/env bash\n".write(
+            to: repository.appendingPathComponent("scripts/run-app.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(currentBranch: "main")
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("Storage-Assistant is on branch main, expected develop; update skipped.")
+        )
+    }
+
     func testReportsRepositoryWithoutLauncherAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         try FileManager.default.createDirectory(
@@ -106,12 +133,20 @@ final class PackageWorkspaceTests: XCTestCase {
 
 private struct WorkspaceGitRunner: GitRunning {
     let remote: String
+    let currentBranch: String
 
-    init(remote: String = "https://github.com/sternard/Storage-Assistant.git") {
+    init(
+        remote: String = "https://github.com/sternard/Storage-Assistant.git",
+        currentBranch: String = "develop"
+    ) {
         self.remote = remote
+        self.currentBranch = currentBranch
     }
 
     func run(_ arguments: [String], description: String) throws -> String {
-        remote
+        if arguments.contains("branch") {
+            return currentBranch
+        }
+        return remote
     }
 }
