@@ -1,0 +1,6 @@
+.build/
+.DS_Store
+
+# Managed repositories are independent projects and must never be committed here.
+Packages/*
+!Packages/.gitkeep
