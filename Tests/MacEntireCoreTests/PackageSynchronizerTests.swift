@@ -108,7 +108,7 @@ final class PackageSynchronizerTests: XCTestCase {
             branch: "release/next",
             directoryURL: directory
         )
-        let git = FakeGitRunner(statusOutput: "") {
+        let git = FakeGitRunner(currentBranchOutput: "release/next", statusOutput: "") {
             try FileManager.default.createDirectory(
                 at: directory.appendingPathComponent("scripts", isDirectory: true),
                 withIntermediateDirectories: true
@@ -126,10 +126,40 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronize(package)
 
-        XCTAssertEqual(git.commands, [[
-            "clone", "--origin", "origin", "--branch", "release/next", "--single-branch",
-            "https://github.com/sternard/Example-App", directory.path
-        ]])
+        XCTAssertEqual(git.commands, [
+            [
+                "clone", "--origin", "origin", "--branch", "release/next", "--single-branch",
+                "https://github.com/sternard/Example-App", directory.path
+            ],
+            ["-C", directory.path, "branch", "--show-current"]
+        ])
+    }
+
+    func testRefusesConfiguredBranchCloneThatLandsOnDetachedHead() throws {
+        let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            branch: "release",
+            directoryURL: directory
+        )
+        let git = FakeGitRunner(currentBranchOutput: "", statusOutput: "")
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, .detachedHead("Example-App"))
+        }
+        XCTAssertEqual(git.commands, [
+            [
+                "clone", "--origin", "origin", "--branch", "release", "--single-branch",
+                "https://github.com/sternard/Example-App", directory.path
+            ],
+            ["-C", directory.path, "branch", "--show-current"]
+        ])
     }
 
     func testRefusesRepositoryWithUnexpectedOrigin() throws {

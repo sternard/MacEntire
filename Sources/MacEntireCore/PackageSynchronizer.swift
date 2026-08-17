@@ -176,6 +176,23 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 cloneArguments,
                 description: "Clone \(package.repositoryName)"
             )
+
+            if let expectedBranch = package.branch {
+                let currentBranch = try gitRunner.run(
+                    ["-C", package.directoryURL.path, "branch", "--show-current"],
+                    description: "Read \(package.repositoryName) branch"
+                )
+                guard !currentBranch.isEmpty else {
+                    throw PackageSyncError.detachedHead(package.repositoryName)
+                }
+                guard currentBranch == expectedBranch else {
+                    throw PackageSyncError.branchMismatch(
+                        repository: package.repositoryName,
+                        expected: expectedBranch,
+                        actual: currentBranch
+                    )
+                }
+            }
         }
 
         var launcherIsDirectory: ObjCBool = false
