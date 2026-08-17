@@ -231,6 +231,19 @@ public final class PackageSynchronizer: @unchecked Sendable {
         }
 
         let packageListPath = "Packages/\(PackageListParser.packageListFilename)"
+        let preservedIndexEntry = try packageListIndexEntry(
+            from: gitRunner.run(
+                ["-C", rootDirectory.path, "ls-files", "--stage", "--", packageListPath],
+                description: "Preserve MacEntire package list index"
+            )
+        )
+        let headIndexEntry = packageListTreeEntry(
+            from: try gitRunner.run(
+                ["-C", rootDirectory.path, "ls-tree", "HEAD", "--", packageListPath],
+                description: "Read committed MacEntire package list"
+            )
+        )
+        let packageListHadStagedChanges = preservedIndexEntry != headIndexEntry
         var updateError: Error?
         do {
             _ = try gitRunner.run(
@@ -252,6 +265,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             updateError = error
         }
 
+        var restorationError: Error?
         do {
             try FileManager.default.createDirectory(
                 at: workspace.packagesDirectory,
@@ -259,7 +273,33 @@ public final class PackageSynchronizer: @unchecked Sendable {
             )
             try preservedPackageList.write(to: workspace.packageListURL, options: .atomic)
         } catch {
-            throw PackageSyncError.packageListRestorationFailed(error.localizedDescription)
+            restorationError = error
+        }
+
+        if packageListHadStagedChanges {
+            do {
+                if let preservedIndexEntry {
+                    _ = try gitRunner.run(
+                        [
+                            "-C", rootDirectory.path,
+                            "update-index", "--add", "--cacheinfo",
+                            "\(preservedIndexEntry.mode),\(preservedIndexEntry.objectID),\(packageListPath)"
+                        ],
+                        description: "Restore MacEntire package list index"
+                    )
+                } else {
+                    _ = try gitRunner.run(
+                        ["-C", rootDirectory.path, "update-index", "--force-remove", "--", packageListPath],
+                        description: "Restore MacEntire package list index"
+                    )
+                }
+            } catch {
+                restorationError = restorationError ?? error
+            }
+        }
+
+        if let restorationError {
+            throw PackageSyncError.packageListRestorationFailed(restorationError.localizedDescription)
         }
 
         if let updateError {
@@ -392,6 +432,46 @@ public final class PackageSynchronizer: @unchecked Sendable {
             throw PackageSyncError.missingLauncher(package.repositoryName)
         }
     }
+}
+
+private struct GitFileEntry: Equatable {
+    let mode: String
+    let objectID: String
+}
+
+private func packageListIndexEntry(from output: String) throws -> GitFileEntry? {
+    let lines = output.split(whereSeparator: \.isNewline)
+    guard !lines.isEmpty else {
+        return nil
+    }
+    guard lines.count == 1 else {
+        throw PackageSyncError.packageListRestorationFailed(
+            "The package list has unresolved index entries."
+        )
+    }
+
+    let metadata = lines[0]
+        .split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        .split(whereSeparator: \.isWhitespace)
+    guard metadata.count == 3, metadata[2] == "0" else {
+        throw PackageSyncError.packageListRestorationFailed(
+            "The package list index entry could not be read."
+        )
+    }
+    return GitFileEntry(mode: String(metadata[0]), objectID: String(metadata[1]))
+}
+
+private func packageListTreeEntry(from output: String) -> GitFileEntry? {
+    guard let line = output.split(whereSeparator: \.isNewline).first else {
+        return nil
+    }
+    let metadata = line
+        .split(separator: "\t", maxSplits: 1, omittingEmptySubsequences: false)[0]
+        .split(whereSeparator: \.isWhitespace)
+    guard metadata.count == 3 else {
+        return nil
+    }
+    return GitFileEntry(mode: String(metadata[0]), objectID: String(metadata[2]))
 }
 
 func normalizedGitRemote(_ value: String) -> String {

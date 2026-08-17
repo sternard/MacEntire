@@ -33,6 +33,8 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
         XCTAssertEqual(git.commands, [
             ["-C", temporaryRoot.path, "rev-parse", "--show-toplevel"],
+            ["-C", temporaryRoot.path, "ls-files", "--stage", "--", "Packages/packages.txt"],
+            ["-C", temporaryRoot.path, "ls-tree", "HEAD", "--", "Packages/packages.txt"],
             [
                 "-C", temporaryRoot.path,
                 "restore", "--source=HEAD", "--staged", "--worktree", "--", "Packages/packages.txt"
@@ -42,7 +44,7 @@ final class PackageSynchronizerTests: XCTestCase {
         ])
     }
 
-    func testMacEntireUpdateFastForwardsRealRepositoryAndPreservesCustomizedPackageList() throws {
+    func testMacEntireUpdateFastForwardsRealRepositoryAndPreservesPartiallyStagedPackageList() throws {
         let remote = temporaryRoot.appendingPathComponent("Remote.git", isDirectory: true)
         let source = temporaryRoot.appendingPathComponent("Source", isDirectory: true)
         let checkout = temporaryRoot.appendingPathComponent("Checkout", isDirectory: true)
@@ -92,6 +94,15 @@ final class PackageSynchronizerTests: XCTestCase {
         _ = try git.run(["clone", remote.path, checkout.path], description: "Clone test checkout")
 
         let checkoutPackageList = checkout.appendingPathComponent("Packages/packages.txt")
+        try "staged package list\n".write(
+            to: checkoutPackageList,
+            atomically: true,
+            encoding: .utf8
+        )
+        _ = try git.run(
+            ["-C", checkout.path, "add", "Packages/packages.txt"],
+            description: "Stage customized test package list"
+        )
         try "custom package list\n".write(
             to: checkoutPackageList,
             atomically: true,
@@ -129,11 +140,43 @@ final class PackageSynchronizerTests: XCTestCase {
         )
         XCTAssertEqual(
             try git.run(
-                ["-C", checkout.path, "status", "--porcelain", "--", "Packages/packages.txt"],
-                description: "Check preserved test customization"
+                ["-C", checkout.path, "show", ":Packages/packages.txt"],
+                description: "Read preserved staged test customization"
             ),
-            "M Packages/packages.txt"
+            "staged package list"
         )
+        XCTAssertEqual(
+            try git.run(
+                ["-C", checkout.path, "status", "--porcelain", "--", "Packages/packages.txt"],
+                description: "Check preserved partial test customization"
+            ),
+            "MM Packages/packages.txt"
+        )
+    }
+
+    func testMacEntireUpdateRestoresCustomizedIndexEntry() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let stagedObjectID = String(repeating: "1", count: 40)
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            indexEntryOutput: "100644 \(stagedObjectID) 0\tPackages/packages.txt",
+            headEntryOutput: "100644 blob \(String(repeating: "0", count: 40))\tPackages/packages.txt"
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        try synchronizer.synchronizeMacEntire()
+
+        XCTAssertTrue(git.commands.contains([
+            "-C", temporaryRoot.path,
+            "update-index", "--add", "--cacheinfo",
+            "100644,\(stagedObjectID),Packages/packages.txt"
+        ]))
+        XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
     }
 
     func testMacEntireUpdateRestoresCustomizedPackageListWhenPullFails() throws {
@@ -563,23 +606,38 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let packageListURL: URL
     private let updatedPackageList: String
     private let updateError: PackageSyncError?
+    private let indexEntryOutput: String
+    private let headEntryOutput: String
 
     init(
         rootDirectory: URL,
         packageListURL: URL,
         updatedPackageList: String,
-        updateError: PackageSyncError? = nil
+        updateError: PackageSyncError? = nil,
+        indexEntryOutput: String? = nil,
+        headEntryOutput: String? = nil
     ) {
         self.rootDirectory = rootDirectory
         self.packageListURL = packageListURL
         self.updatedPackageList = updatedPackageList
         self.updateError = updateError
+        let unchangedObjectID = String(repeating: "0", count: 40)
+        self.indexEntryOutput = indexEntryOutput
+            ?? "100644 \(unchangedObjectID) 0\tPackages/packages.txt"
+        self.headEntryOutput = headEntryOutput
+            ?? "100644 blob \(unchangedObjectID)\tPackages/packages.txt"
     }
 
     func run(_ arguments: [String], description: String) throws -> String {
         commands.append(arguments)
         if arguments.contains("rev-parse") {
             return rootDirectory.path
+        }
+        if arguments.contains("ls-files") {
+            return indexEntryOutput
+        }
+        if arguments.contains("ls-tree") {
+            return headEntryOutput
         }
         if arguments.contains("restore") {
             try "committed package list\n".write(
