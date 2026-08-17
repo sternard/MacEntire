@@ -124,6 +124,15 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
             }
 
+            let resolvedTopLevel = try gitRunner.run(
+                ["-C", package.directoryURL.path, "rev-parse", "--show-toplevel"],
+                description: "Validate \(package.repositoryName) checkout"
+            )
+            let resolvedTopLevelURL = URL(fileURLWithPath: resolvedTopLevel, isDirectory: true).standardizedFileURL
+            guard resolvedTopLevelURL.path == package.directoryURL.standardizedFileURL.path else {
+                throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
+            }
+
             let remote = try gitRunner.run(
                 ["-C", package.directoryURL.path, "remote", "get-url", "origin"],
                 description: "Read \(package.repositoryName) origin"

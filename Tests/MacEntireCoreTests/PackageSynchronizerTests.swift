@@ -224,6 +224,25 @@ final class PackageSynchronizerTests: XCTestCase {
         })
     }
 
+    func testRefusesCheckoutThatGitResolvesToParentRepository() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(
+            topLevelOutput: temporaryRoot.path,
+            statusOutput: ""
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, .destinationIsNotRepository("Example-App"))
+        }
+        XCTAssertEqual(git.commands, [
+            ["-C", package.directoryURL.path, "rev-parse", "--show-toplevel"]
+        ])
+    }
+
     func testRefusesSymlinkedCheckoutDirectory() throws {
         let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
         let externalDirectory = temporaryRoot.appendingPathComponent("External-Example-App", isDirectory: true)
@@ -311,17 +330,20 @@ final class PackageSynchronizerTests: XCTestCase {
 private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private(set) var commands: [[String]] = []
     private let remoteOutput: String
+    private let topLevelOutput: String?
     private let currentBranchOutput: String
     private let statusOutput: String
     private let cloneHandler: (() throws -> Void)?
 
     init(
         remoteOutput: String = "https://github.com/sternard/Example-App.git",
+        topLevelOutput: String? = nil,
         currentBranchOutput: String = "main",
         statusOutput: String,
         cloneHandler: (() throws -> Void)? = nil
     ) {
         self.remoteOutput = remoteOutput
+        self.topLevelOutput = topLevelOutput
         self.currentBranchOutput = currentBranchOutput
         self.statusOutput = statusOutput
         self.cloneHandler = cloneHandler
@@ -329,6 +351,9 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
 
     func run(_ arguments: [String], description: String) throws -> String {
         commands.append(arguments)
+        if arguments.contains("rev-parse") {
+            return topLevelOutput ?? arguments[1]
+        }
         if arguments.contains("remote") {
             return remoteOutput
         }
