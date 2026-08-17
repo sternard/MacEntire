@@ -14,6 +14,17 @@ public struct ManagedPackage: Identifiable, Equatable, Sendable {
         definition.id
     }
 
+    public var displayTitle: String {
+        switch state {
+        case .ready:
+            return definition.displayName
+        case .notInstalled:
+            return "\(definition.displayName) — Not installed"
+        case .unavailable(let reason):
+            return "\(definition.displayName) — Unavailable: \(reason)"
+        }
+    }
+
     public init(definition: PackageDefinition, state: PackageState) {
         self.definition = definition
         self.state = state

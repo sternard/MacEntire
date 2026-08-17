@@ -38,6 +38,24 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertFalse(package.isLaunchEnabled(whileSynchronizing: true))
     }
 
+    func testUnavailablePackageDisplayTitleIncludesReason() {
+        let definition = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Storage-Assistant")!,
+            repositoryName: "Storage-Assistant",
+            displayName: "Storage Assistant",
+            directoryURL: temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        )
+        let package = ManagedPackage(
+            definition: definition,
+            state: .unavailable("Missing scripts/run-app.sh")
+        )
+
+        XCTAssertEqual(
+            package.displayTitle,
+            "Storage Assistant — Unavailable: Missing scripts/run-app.sh"
+        )
+    }
+
     func testReportsRepositoryWithLauncherAsReady() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)

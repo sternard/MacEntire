@@ -90,13 +90,13 @@ private struct PackageMenu: View {
             Button {
                 catalog.launch(package.definition)
             } label: {
-                Label(package.definition.displayName, systemImage: "app")
+                Label(package.displayTitle, systemImage: "app")
             }
             .disabled(!package.isLaunchEnabled(whileSynchronizing: catalog.isSynchronizing))
         case .notInstalled:
-            Label("\(package.definition.displayName) — Not installed", systemImage: "arrow.down.circle")
+            Label(package.displayTitle, systemImage: "arrow.down.circle")
         case .unavailable:
-            Label("\(package.definition.displayName) — Unavailable", systemImage: "exclamationmark.triangle")
+            Label(package.displayTitle, systemImage: "exclamationmark.triangle")
         }
     }
 }
