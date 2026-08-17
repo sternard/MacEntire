@@ -184,6 +184,17 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 description: "Clone \(package.repositoryName)"
             )
 
+            let remote = try gitRunner.run(
+                ["-C", package.directoryURL.path, "remote", "get-url", "origin"],
+                description: "Read \(package.repositoryName) origin"
+            )
+            guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
+                throw PackageSyncError.remoteMismatch(
+                    expected: package.repositoryURL.absoluteString,
+                    actual: remote.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            }
+
             if let expectedBranch = package.branch {
                 let currentBranch = try gitRunner.run(
                     ["-C", package.directoryURL.path, "branch", "--show-current"],
