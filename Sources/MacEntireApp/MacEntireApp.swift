@@ -1,5 +1,6 @@
 import AppKit
 import MacEntireCore
+import ServiceManagement
 import SwiftUI
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
@@ -12,10 +13,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 struct MacEntireApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var catalog = PackageCatalog()
+    @StateObject private var loginItem = LoginItemController()
 
     var body: some Scene {
         MenuBarExtra("MacEntire", systemImage: "square.grid.2x2") {
-            PackageMenu(catalog: catalog)
+            PackageMenu(catalog: catalog, loginItem: loginItem)
         }
         .menuBarExtraStyle(.menu)
     }
@@ -23,6 +25,7 @@ struct MacEntireApp: App {
 
 private struct PackageMenu: View {
     @ObservedObject var catalog: PackageCatalog
+    @ObservedObject var loginItem: LoginItemController
 
     var body: some View {
         Group {
@@ -62,12 +65,27 @@ private struct PackageMenu: View {
 
             Divider()
 
+            Toggle(
+                "Start on Login",
+                isOn: Binding(
+                    get: { loginItem.isEnabled },
+                    set: { loginItem.setEnabled($0) }
+                )
+            )
+
+            if let statusMessage = loginItem.statusMessage {
+                Text(statusMessage)
+            }
+
+            Divider()
+
             Button("Quit MacEntire") {
                 NSApp.terminate(nil)
             }
         }
         .onAppear {
             catalog.refresh()
+            loginItem.refresh()
         }
     }
 
@@ -84,6 +102,50 @@ private struct PackageMenu: View {
             Label("\(package.definition.displayName) — Not installed", systemImage: "arrow.down.circle")
         case .unavailable:
             Label("\(package.definition.displayName) — Unavailable", systemImage: "exclamationmark.triangle")
+        }
+    }
+}
+
+@MainActor
+private final class LoginItemController: ObservableObject {
+    @Published private(set) var isEnabled = false
+    @Published private(set) var statusMessage: String?
+
+    init() {
+        refresh()
+    }
+
+    func refresh() {
+        switch SMAppService.mainApp.status {
+        case .enabled:
+            isEnabled = true
+            statusMessage = nil
+        case .requiresApproval:
+            isEnabled = true
+            statusMessage = "Approval required in System Settings → General → Login Items"
+        case .notRegistered:
+            isEnabled = false
+            statusMessage = nil
+        case .notFound:
+            isEnabled = false
+            statusMessage = "Login item is unavailable for this app"
+        @unknown default:
+            isEnabled = false
+            statusMessage = "Login item status is unavailable"
+        }
+    }
+
+    func setEnabled(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            refresh()
+        } catch {
+            refresh()
+            statusMessage = "Could not update Start on Login: \(error.localizedDescription)"
         }
     }
 }

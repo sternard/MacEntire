@@ -13,9 +13,6 @@ INSTALL_DIR="${MACENTIRE_INSTALL_DIR:-$HOME/Applications}"
 APP_BUNDLE="$INSTALL_DIR/$PRODUCT_NAME.app"
 CONTENTS_DIR="$STAGED_APP_BUNDLE/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
-LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-LAUNCH_AGENT_PLIST="$LAUNCH_AGENTS_DIR/$BUNDLE_IDENTIFIER.plist"
-GUI_DOMAIN="gui/$(id -u)"
 
 cd "$ROOT_DIR"
 swift build -c "$CONFIGURATION"
@@ -65,33 +62,8 @@ mkdir -p "$INSTALL_DIR"
 rm -rf "$APP_BUNDLE"
 cp -R "$STAGED_APP_BUNDLE" "$APP_BUNDLE"
 
-mkdir -p "$LAUNCH_AGENTS_DIR"
-cat > "$LAUNCH_AGENT_PLIST" <<PLIST
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>$BUNDLE_IDENTIFIER</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>$APP_BUNDLE/Contents/MacOS/$EXECUTABLE_NAME</string>
-    </array>
-    <key>RunAtLoad</key>
-    <true/>
-    <key>KeepAlive</key>
-    <false/>
-</dict>
-</plist>
-PLIST
-
 plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null
-plutil -lint "$LAUNCH_AGENT_PLIST" >/dev/null
-
-launchctl bootout "$GUI_DOMAIN" "$LAUNCH_AGENT_PLIST" >/dev/null 2>&1 || true
-launchctl bootstrap "$GUI_DOMAIN" "$LAUNCH_AGENT_PLIST"
-launchctl enable "$GUI_DOMAIN/$BUNDLE_IDENTIFIER"
-launchctl kickstart -k "$GUI_DOMAIN/$BUNDLE_IDENTIFIER"
 
 echo "Installed $APP_BUNDLE"
-echo "Enabled login startup via $LAUNCH_AGENT_PLIST"
+echo "Use Start on Login in the MacEntire menu to control login startup."
+open "$APP_BUNDLE"

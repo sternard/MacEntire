@@ -48,13 +48,15 @@ The script builds a local `.app` bundle and opens MacEntire as a menu bar app. I
 
 Set `MACENTIRE_SKIP_OPEN=1` to build and validate the app bundle without opening it.
 
-## Install at login
+## Install
 
 ```sh
 ./scripts/install-app.sh
 ```
 
-This installs `~/Applications/MacEntire.app` and creates `~/Library/LaunchAgents/local.macentire.plist`. The installed app continues to manage the `Packages/` directory beside this source checkout, so rerun the installer after moving the MacEntire repository.
+This installs and opens `~/Applications/MacEntire.app`. Use **Start on Login** in the MacEntire menu to control whether macOS opens it when you sign in.
+
+The installed app continues to manage the `Packages/` directory beside this source checkout, so rerun the installer after moving the MacEntire repository.
 
 ## Tests
 
