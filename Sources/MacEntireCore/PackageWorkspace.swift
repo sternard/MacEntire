@@ -18,6 +18,10 @@ public struct ManagedPackage: Identifiable, Equatable, Sendable {
         self.definition = definition
         self.state = state
     }
+
+    public func isLaunchEnabled(whileSynchronizing isSynchronizing: Bool) -> Bool {
+        state == .ready && !isSynchronizing
+    }
 }
 
 public struct PackageWorkspace: Sendable {

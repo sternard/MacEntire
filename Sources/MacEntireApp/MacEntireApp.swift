@@ -92,6 +92,7 @@ private struct PackageMenu: View {
             } label: {
                 Label(package.definition.displayName, systemImage: "app")
             }
+            .disabled(!package.isLaunchEnabled(whileSynchronizing: catalog.isSynchronizing))
         case .notInstalled:
             Label("\(package.definition.displayName) — Not installed", systemImage: "arrow.down.circle")
         case .unavailable:

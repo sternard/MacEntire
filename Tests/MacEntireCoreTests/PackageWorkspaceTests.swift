@@ -25,6 +25,19 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertEqual(packages.first?.state, .notInstalled)
     }
 
+    func testReadyPackageLaunchIsDisabledWhileSynchronizing() {
+        let definition = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Storage-Assistant")!,
+            repositoryName: "Storage-Assistant",
+            displayName: "Storage Assistant",
+            directoryURL: temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        )
+        let package = ManagedPackage(definition: definition, state: .ready)
+
+        XCTAssertTrue(package.isLaunchEnabled(whileSynchronizing: false))
+        XCTAssertFalse(package.isLaunchEnabled(whileSynchronizing: true))
+    }
+
     func testReportsRepositoryWithLauncherAsReady() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
