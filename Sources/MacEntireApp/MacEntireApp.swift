@@ -160,27 +160,43 @@ private final class PackageCatalog: ObservableObject {
     }
 
     private let workspace: PackageWorkspace
+    private let inspector: PackageInspector
     private let synchronizer: PackageSynchronizer
     private let launcher = PackageLauncher()
+    private var refreshGeneration = 0
 
     init(rootDirectory: URL = WorkspaceRoot.resolve()) {
         let workspace = PackageWorkspace(rootDirectory: rootDirectory)
         self.workspace = workspace
+        self.inspector = PackageInspector(workspace: workspace)
         self.synchronizer = PackageSynchronizer(workspace: workspace)
         refresh()
     }
 
     func refresh() {
-        do {
-            packages = try workspace.packages()
-            if packages.isEmpty {
-                statusMessage = "No packages configured"
-            } else if statusMessage == "No packages configured" {
-                statusMessage = nil
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        let inspector = inspector
+
+        Task {
+            do {
+                let inspectedPackages = try await inspector.packages()
+                guard generation == refreshGeneration else {
+                    return
+                }
+                packages = inspectedPackages
+                if packages.isEmpty {
+                    statusMessage = "No packages configured"
+                } else if statusMessage == "No packages configured" {
+                    statusMessage = nil
+                }
+            } catch {
+                guard generation == refreshGeneration else {
+                    return
+                }
+                packages = []
+                statusMessage = error.localizedDescription
             }
-        } catch {
-            packages = []
-            statusMessage = error.localizedDescription
         }
     }
 
