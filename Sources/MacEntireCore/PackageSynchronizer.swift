@@ -57,6 +57,7 @@ public protocol GitRunning: Sendable {
 
 public struct ProcessGitRunner: GitRunning, Sendable {
     public static let defaultTimeout: TimeInterval = 5 * 60
+    static let maximumCapturedOutputBytes = 256 * 1024
 
     private let executableURL: URL
     private let timeout: TimeInterval
@@ -70,33 +71,30 @@ public struct ProcessGitRunner: GitRunning, Sendable {
     }
 
     public func run(_ arguments: [String], description: String) throws -> String {
-        let outputURL = FileManager.default.temporaryDirectory
-            .appendingPathComponent("MacEntireGit-\(UUID().uuidString).log", isDirectory: false)
-        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil) else {
-            throw PackageSyncError.commandFailed(
-                command: description,
-                output: "Could not create temporary command output."
-            )
-        }
-
-        let outputHandle: FileHandle
-        do {
-            outputHandle = try FileHandle(forWritingTo: outputURL)
-        } catch {
-            try? FileManager.default.removeItem(at: outputURL)
-            throw PackageSyncError.commandFailed(command: description, output: error.localizedDescription)
+        let outputPipe = Pipe()
+        let output = BoundedProcessOutput(maximumBytes: Self.maximumCapturedOutputBytes)
+        let readerFinished = DispatchSemaphore(value: 0)
+        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                readerFinished.signal()
+                return
+            }
+            output.append(data)
         }
         defer {
-            try? outputHandle.close()
-            try? FileManager.default.removeItem(at: outputURL)
+            outputPipe.fileHandleForReading.readabilityHandler = nil
+            try? outputPipe.fileHandleForReading.close()
+            try? outputPipe.fileHandleForWriting.close()
         }
 
         let process = Process()
         let termination = DispatchSemaphore(value: 0)
         process.executableURL = executableURL
         process.arguments = arguments
-        process.standardOutput = outputHandle
-        process.standardError = outputHandle
+        process.standardOutput = outputPipe
+        process.standardError = outputPipe
         process.terminationHandler = { _ in
             termination.signal()
         }
@@ -110,6 +108,7 @@ public struct ProcessGitRunner: GitRunning, Sendable {
         } catch {
             throw PackageSyncError.commandFailed(command: description, output: error.localizedDescription)
         }
+        try? outputPipe.fileHandleForWriting.close()
 
         guard termination.wait(timeout: .now() + max(timeout, 0)) == .success else {
             process.terminate()
@@ -120,32 +119,48 @@ public struct ProcessGitRunner: GitRunning, Sendable {
             throw PackageSyncError.commandTimedOut(command: description)
         }
 
-        try? outputHandle.close()
-        let output = capturedGitOutput(at: outputURL)
+        _ = readerFinished.wait(timeout: .now() + 1)
+        let capturedOutput = output.string
 
         guard process.terminationStatus == 0 else {
-            throw PackageSyncError.commandFailed(command: description, output: output)
+            throw PackageSyncError.commandFailed(command: description, output: capturedOutput)
         }
 
-        return output
+        return capturedOutput
     }
 }
 
-private func capturedGitOutput(at url: URL, maximumBytes: UInt64 = 256 * 1024) -> String {
-    guard let handle = try? FileHandle(forReadingFrom: url) else {
-        return ""
-    }
-    defer { try? handle.close() }
+private final class BoundedProcessOutput: @unchecked Sendable {
+    private let maximumBytes: Int
+    private let lock = NSLock()
+    private var data = Data()
 
-    let length = (try? handle.seekToEnd()) ?? 0
-    if length > maximumBytes {
-        try? handle.seek(toOffset: length - maximumBytes)
-    } else {
-        try? handle.seek(toOffset: 0)
+    init(maximumBytes: Int) {
+        self.maximumBytes = maximumBytes
     }
-    let data = (try? handle.readToEnd()) ?? Data()
-    return String(decoding: data, as: UTF8.self)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
+
+    func append(_ newData: Data) {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if newData.count >= maximumBytes {
+            data = Data(newData.suffix(maximumBytes))
+            return
+        }
+
+        let overflow = data.count + newData.count - maximumBytes
+        if overflow > 0 {
+            data.removeFirst(overflow)
+        }
+        data.append(newData)
+    }
+
+    var string: String {
+        lock.lock()
+        defer { lock.unlock() }
+        return String(decoding: data, as: UTF8.self)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
 }
 
 public final class PackageSynchronizer: @unchecked Sendable {
