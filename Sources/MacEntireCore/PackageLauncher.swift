@@ -25,6 +25,45 @@ public func packageLaunchCompletionMessage(
     }
 }
 
+public struct PackageLaunchStatusState: Equatable, Sendable {
+    private var launchOrder: [UUID] = []
+    private var messages: [UUID: String] = [:]
+
+    public var message: String? {
+        launchOrder.reversed().compactMap { messages[$0] }.first
+    }
+
+    public init() {}
+
+    @discardableResult
+    public mutating func beginLaunch(packageName: String, identifier: UUID = UUID()) -> UUID {
+        launchOrder.removeAll { $0 == identifier }
+        launchOrder.append(identifier)
+        messages[identifier] = "Launching \(packageName)…"
+        return identifier
+    }
+
+    public mutating func completeLaunch(
+        identifier: UUID,
+        result: Result<Void, PackageLaunchError>
+    ) {
+        if let message = packageLaunchCompletionMessage(for: result) {
+            messages[identifier] = message
+        } else {
+            removeLaunch(identifier)
+        }
+    }
+
+    public mutating func failToStart(identifier: UUID, message: String) {
+        messages[identifier] = message
+    }
+
+    private mutating func removeLaunch(_ identifier: UUID) {
+        messages[identifier] = nil
+        launchOrder.removeAll { $0 == identifier }
+    }
+}
+
 public final class PackageLauncher: @unchecked Sendable {
     static let maximumCapturedOutputBytes = 64 * 1024
 

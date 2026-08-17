@@ -19,6 +19,34 @@ final class PackageLauncherTests: XCTestCase {
         )
     }
 
+    func testSuccessfulCompletionPreservesAnotherActiveLaunchStatus() {
+        let firstIdentifier = UUID()
+        let secondIdentifier = UUID()
+        var status = PackageLaunchStatusState()
+        status.beginLaunch(packageName: "First App", identifier: firstIdentifier)
+        status.beginLaunch(packageName: "Second App", identifier: secondIdentifier)
+
+        status.completeLaunch(identifier: secondIdentifier, result: .success(()))
+
+        XCTAssertEqual(status.message, "Launching First App…")
+    }
+
+    func testSuccessfulCompletionDoesNotEraseAnotherLaunchFailure() {
+        let firstIdentifier = UUID()
+        let secondIdentifier = UUID()
+        var status = PackageLaunchStatusState()
+        status.beginLaunch(packageName: "First App", identifier: firstIdentifier)
+        status.beginLaunch(packageName: "Second App", identifier: secondIdentifier)
+        status.completeLaunch(
+            identifier: secondIdentifier,
+            result: .failure(.unsuccessfulExit(package: "Second App", status: 7, output: "failed"))
+        )
+
+        status.completeLaunch(identifier: firstIdentifier, result: .success(()))
+
+        XCTAssertEqual(status.message, "Second App launcher exited with status 7: failed")
+    }
+
     func testReportsNonzeroLauncherExitWithCapturedOutput() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)

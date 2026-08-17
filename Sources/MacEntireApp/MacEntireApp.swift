@@ -164,6 +164,7 @@ private final class PackageCatalog: ObservableObject {
     private let inspector: PackageInspector
     private let synchronizer: PackageSynchronizer
     private let launcher = PackageLauncher()
+    private var launchStatusState = PackageLaunchStatusState()
     private var refreshGeneration = 0
 
     init(rootDirectory: URL = WorkspaceRoot.resolve()) {
@@ -245,6 +246,9 @@ private final class PackageCatalog: ObservableObject {
             return
         }
 
+        let launchIdentifier = launchStatusState.beginLaunch(packageName: package.displayName)
+        statusMessage = launchStatusState.message
+
         do {
             try launcher.launch(package) { [weak self] result in
                 Task { @MainActor [weak self] in
@@ -252,13 +256,17 @@ private final class PackageCatalog: ObservableObject {
                         return
                     }
                     operationState.endLaunch()
-                    statusMessage = packageLaunchCompletionMessage(for: result)
+                    launchStatusState.completeLaunch(identifier: launchIdentifier, result: result)
+                    statusMessage = launchStatusState.message
                 }
             }
-            statusMessage = "Launching \(package.displayName)…"
         } catch {
             operationState.endLaunch()
-            statusMessage = "Could not launch \(package.displayName): \(error.localizedDescription)"
+            launchStatusState.failToStart(
+                identifier: launchIdentifier,
+                message: "Could not launch \(package.displayName): \(error.localizedDescription)"
+            )
+            statusMessage = launchStatusState.message
         }
     }
 
