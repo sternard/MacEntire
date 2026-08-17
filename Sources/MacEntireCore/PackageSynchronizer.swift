@@ -18,6 +18,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case destinationIsNotRepository(String)
     case remoteMismatch(expected: String, actual: String)
     case branchMismatch(repository: String, expected: String, actual: String)
+    case detachedHead(String)
     case localChanges(String)
     case missingLauncher(String)
     case commandFailed(command: String, output: String)
@@ -30,6 +31,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "Origin is \(actual), expected \(expected)."
         case .branchMismatch(let repository, let expected, let actual):
             return "\(repository) is on branch \(actual), expected \(expected); update skipped."
+        case .detachedHead(let name):
+            return "\(name) has a detached HEAD; update skipped."
         case .localChanges(let name):
             return "\(name) has local changes; update skipped."
         case .missingLauncher(let name):
@@ -133,26 +136,34 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 throw PackageSyncError.localChanges(package.repositoryName)
             }
 
+            let currentBranch = try gitRunner.run(
+                ["-C", package.directoryURL.path, "branch", "--show-current"],
+                description: "Read \(package.repositoryName) branch"
+            )
+            guard !currentBranch.isEmpty else {
+                throw PackageSyncError.detachedHead(package.repositoryName)
+            }
+
             if let expectedBranch = package.branch {
-                let currentBranch = try gitRunner.run(
-                    ["-C", package.directoryURL.path, "branch", "--show-current"],
-                    description: "Read \(package.repositoryName) branch"
-                )
                 guard currentBranch == expectedBranch else {
                     throw PackageSyncError.branchMismatch(
                         repository: package.repositoryName,
                         expected: expectedBranch,
-                        actual: currentBranch.isEmpty ? "detached HEAD" : currentBranch
+                        actual: currentBranch
                     )
                 }
             }
 
-            var pullArguments = ["-C", package.directoryURL.path, "pull", "--ff-only"]
-            if let branch = package.branch {
-                pullArguments.append(contentsOf: ["origin", branch])
-            }
+            let branch = package.branch ?? currentBranch
             _ = try gitRunner.run(
-                pullArguments,
+                ["-C", package.directoryURL.path, "fetch", "origin", branch],
+                description: "Fetch \(package.repositoryName)"
+            )
+            _ = try gitRunner.run(
+                [
+                    "-C", package.directoryURL.path,
+                    "merge", "--ff-only", "--no-overwrite-ignore", "FETCH_HEAD"
+                ],
                 description: "Update \(package.repositoryName)"
             )
         } else {

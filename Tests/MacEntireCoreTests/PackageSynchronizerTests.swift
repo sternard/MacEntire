@@ -16,7 +16,7 @@ final class PackageSynchronizerTests: XCTestCase {
         }
     }
 
-    func testRefusesToPullRepositoryWithLocalChanges() throws {
+    func testRefusesToUpdateRepositoryWithLocalChanges() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(statusOutput: " M README.md")
         let synchronizer = PackageSynchronizer(
@@ -27,10 +27,10 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
             XCTAssertEqual(error as? PackageSyncError, .localChanges("Example-App"))
         }
-        XCTAssertFalse(git.commands.contains { $0.contains("pull") })
+        XCTAssertFalse(git.commands.contains { $0.contains("fetch") || $0.contains("merge") })
     }
 
-    func testCleanRepositoryUsesFastForwardOnlyPull() throws {
+    func testCleanRepositoryFetchesCurrentBranchFromOriginAndFastForwardsSafely() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(statusOutput: "")
         let synchronizer = PackageSynchronizer(
@@ -40,12 +40,14 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronize(package)
 
-        XCTAssertTrue(git.commands.contains { command in
-            command.suffix(2) == ["pull", "--ff-only"]
+        XCTAssertTrue(git.commands.contains { $0.suffix(3) == ["fetch", "origin", "main"] })
+        XCTAssertTrue(git.commands.contains {
+            $0.suffix(4) == ["merge", "--ff-only", "--no-overwrite-ignore", "FETCH_HEAD"]
         })
+        XCTAssertFalse(git.commands.contains { $0.contains("pull") })
     }
 
-    func testConfiguredBranchUsesExplicitFastForwardPull() throws {
+    func testConfiguredBranchFetchesExplicitlyFromOriginAndFastForwardsSafely() throws {
         let package = try makeInstalledPackage(branch: "develop")
         let git = FakeGitRunner(currentBranchOutput: "develop", statusOutput: "")
         let synchronizer = PackageSynchronizer(
@@ -55,9 +57,11 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronize(package)
 
-        XCTAssertTrue(git.commands.contains { command in
-            command.suffix(4) == ["pull", "--ff-only", "origin", "develop"]
+        XCTAssertTrue(git.commands.contains { $0.suffix(3) == ["fetch", "origin", "develop"] })
+        XCTAssertTrue(git.commands.contains {
+            $0.suffix(4) == ["merge", "--ff-only", "--no-overwrite-ignore", "FETCH_HEAD"]
         })
+        XCTAssertFalse(git.commands.contains { $0.contains("pull") })
     }
 
     func testRefusesConfiguredBranchMismatch() throws {
@@ -74,7 +78,21 @@ final class PackageSynchronizerTests: XCTestCase {
                 .branchMismatch(repository: "Example-App", expected: "develop", actual: "main")
             )
         }
-        XCTAssertFalse(git.commands.contains { $0.contains("pull") })
+        XCTAssertFalse(git.commands.contains { $0.contains("fetch") || $0.contains("merge") })
+    }
+
+    func testRefusesDetachedHead() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(currentBranchOutput: "", statusOutput: "")
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, .detachedHead("Example-App"))
+        }
+        XCTAssertFalse(git.commands.contains { $0.contains("fetch") || $0.contains("merge") })
     }
 
     func testMissingRepositoryClonesConfiguredBranch() throws {
@@ -130,7 +148,9 @@ final class PackageSynchronizerTests: XCTestCase {
                 )
             )
         }
-        XCTAssertFalse(git.commands.contains { $0.contains("status") || $0.contains("pull") })
+        XCTAssertFalse(git.commands.contains {
+            $0.contains("status") || $0.contains("fetch") || $0.contains("merge")
+        })
     }
 
     private func makeInstalledPackage(branch: String? = nil) throws -> PackageDefinition {
