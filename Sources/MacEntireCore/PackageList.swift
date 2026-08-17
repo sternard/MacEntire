@@ -4,6 +4,7 @@ public struct PackageDefinition: Identifiable, Hashable, Sendable {
     public let repositoryURL: URL
     public let repositoryName: String
     public let displayName: String
+    public let branch: String?
     public let directoryURL: URL
 
     public var id: String {
@@ -18,11 +19,13 @@ public struct PackageDefinition: Identifiable, Hashable, Sendable {
         repositoryURL: URL,
         repositoryName: String,
         displayName: String,
+        branch: String? = nil,
         directoryURL: URL
     ) {
         self.repositoryURL = repositoryURL
         self.repositoryName = repositoryName
         self.displayName = displayName
+        self.branch = branch
         self.directoryURL = directoryURL.standardizedFileURL
     }
 }
@@ -37,7 +40,7 @@ public enum PackageListError: LocalizedError, Equatable {
         case .unreadableFile(let path):
             return "Could not read the package list at \(path)."
         case .invalidEntry(let line, let value):
-            return "Invalid package URL on line \(line): \(value)"
+            return "Invalid package entry on line \(line): \(value)"
         case .duplicateDirectory(let line, let name):
             return "Package directory \(name) is repeated on line \(line)."
         }
@@ -59,8 +62,10 @@ public struct PackageListParser: Sendable {
                 continue
             }
 
-            let value = markdownDestination(in: line) ?? line
-            guard let parsed = parseGitHubURL(value) else {
+            guard
+                let entry = parseEntry(line),
+                let parsed = parseGitHubURL(entry.repository)
+            else {
                 throw PackageListError.invalidEntry(line: lineNumber, value: line)
             }
 
@@ -72,6 +77,7 @@ public struct PackageListParser: Sendable {
                 repositoryURL: parsed.url,
                 repositoryName: parsed.repositoryName,
                 displayName: humanized(parsed.repositoryName),
+                branch: entry.branch,
                 directoryURL: packagesDirectory.appendingPathComponent(parsed.repositoryName, isDirectory: true)
             ))
         }
@@ -79,13 +85,67 @@ public struct PackageListParser: Sendable {
         return packages
     }
 
-    private func markdownDestination(in line: String) -> String? {
-        guard line.hasPrefix("["), line.hasSuffix(")"), let separator = line.range(of: "](") else {
+    private func parseEntry(_ line: String) -> (repository: String, branch: String?)? {
+        let repository: String
+        let optionTokens: [Substring]
+
+        if line.hasPrefix("[") {
+            guard
+                let separator = line.range(of: "]("),
+                let closingParenthesis = line[separator.upperBound...].firstIndex(of: ")")
+            else {
+                return nil
+            }
+
+            repository = String(line[separator.upperBound..<closingParenthesis])
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            optionTokens = line[line.index(after: closingParenthesis)...]
+                .split(whereSeparator: { $0.isWhitespace })
+        } else {
+            let tokens = line.split(whereSeparator: { $0.isWhitespace })
+            guard let first = tokens.first else {
+                return nil
+            }
+            repository = String(first)
+            optionTokens = Array(tokens.dropFirst())
+        }
+
+        guard !repository.isEmpty else {
             return nil
         }
 
-        return String(line[separator.upperBound..<line.index(before: line.endIndex)])
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if optionTokens.isEmpty {
+            return (repository, nil)
+        }
+
+        guard
+            optionTokens.count == 2,
+            optionTokens[0] == "-b"
+        else {
+            return nil
+        }
+
+        let branch = String(optionTokens[1])
+        guard isValidBranchName(branch) else {
+            return nil
+        }
+
+        return (repository, branch)
+    }
+
+    private func isValidBranchName(_ branch: String) -> Bool {
+        let forbiddenCharacters = CharacterSet(charactersIn: " ~^:?*[\\")
+        let components = branch.split(separator: "/", omittingEmptySubsequences: false)
+
+        return !branch.isEmpty
+            && branch != "@"
+            && !branch.hasPrefix("-")
+            && !branch.hasSuffix(".")
+            && !branch.contains("..")
+            && !branch.contains("@{")
+            && branch.rangeOfCharacter(from: forbiddenCharacters) == nil
+            && branch.unicodeScalars.allSatisfy { $0.value >= 0x20 && $0.value != 0x7f }
+            && components.allSatisfy { !$0.isEmpty && !$0.hasPrefix(".") && !$0.hasSuffix(".lock") }
     }
 
     private func parseGitHubURL(_ value: String) -> (url: URL, repositoryName: String)? {

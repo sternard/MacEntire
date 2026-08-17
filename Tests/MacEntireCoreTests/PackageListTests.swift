@@ -8,15 +8,16 @@ final class PackageListTests: XCTestCase {
         let contents = """
         // packages.txt
         https://github.com/sternard/Storage-Assistant
-
-        [HEIC](https://github.com/sternard/HEIC-to-JPEG.git)
+        https://github.com/sternard/HEIC-to-JPEG.git -b develop
+        [Screen Swap](https://github.com/sternard/Screen-Swap) -b feature/faster-swap
         # This is also a comment
         """
 
         let packages = try PackageListParser().parse(contents, packagesDirectory: packagesDirectory)
 
-        XCTAssertEqual(packages.map(\.repositoryName), ["Storage-Assistant", "HEIC-to-JPEG"])
-        XCTAssertEqual(packages.map(\.displayName), ["Storage Assistant", "HEIC To JPEG"])
+        XCTAssertEqual(packages.map(\.repositoryName), ["Storage-Assistant", "HEIC-to-JPEG", "Screen-Swap"])
+        XCTAssertEqual(packages.map(\.displayName), ["Storage Assistant", "HEIC To JPEG", "Screen Swap"])
+        XCTAssertEqual(packages.map(\.branch), [nil, "develop", "feature/faster-swap"])
         XCTAssertEqual(
             packages[0].directoryURL,
             packagesDirectory.appendingPathComponent("Storage-Assistant", isDirectory: true)
@@ -35,6 +36,16 @@ final class PackageListTests: XCTestCase {
                 error as? PackageListError,
                 .invalidEntry(line: 1, value: "https://example.com/sternard/Storage-Assistant")
             )
+        }
+    }
+
+    func testRejectsIncompleteBranchOption() {
+        let entry = "https://github.com/sternard/Storage-Assistant -b"
+
+        XCTAssertThrowsError(
+            try PackageListParser().parse(entry, packagesDirectory: packagesDirectory)
+        ) { error in
+            XCTAssertEqual(error as? PackageListError, .invalidEntry(line: 1, value: entry))
         }
     }
 

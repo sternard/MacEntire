@@ -17,6 +17,7 @@ public struct PackageSyncResult: Equatable, Sendable {
 public enum PackageSyncError: LocalizedError, Equatable {
     case destinationIsNotRepository(String)
     case remoteMismatch(expected: String, actual: String)
+    case branchMismatch(repository: String, expected: String, actual: String)
     case localChanges(String)
     case missingLauncher(String)
     case commandFailed(command: String, output: String)
@@ -27,6 +28,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) already exists but is not a Git repository."
         case .remoteMismatch(let expected, let actual):
             return "Origin is \(actual), expected \(expected)."
+        case .branchMismatch(let repository, let expected, let actual):
+            return "\(repository) is on branch \(actual), expected \(expected); update skipped."
         case .localChanges(let name):
             return "\(name) has local changes; update skipped."
         case .missingLauncher(let name):
@@ -130,13 +133,36 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 throw PackageSyncError.localChanges(package.repositoryName)
             }
 
+            if let expectedBranch = package.branch {
+                let currentBranch = try gitRunner.run(
+                    ["-C", package.directoryURL.path, "branch", "--show-current"],
+                    description: "Read \(package.repositoryName) branch"
+                )
+                guard currentBranch == expectedBranch else {
+                    throw PackageSyncError.branchMismatch(
+                        repository: package.repositoryName,
+                        expected: expectedBranch,
+                        actual: currentBranch.isEmpty ? "detached HEAD" : currentBranch
+                    )
+                }
+            }
+
+            var pullArguments = ["-C", package.directoryURL.path, "pull", "--ff-only"]
+            if let branch = package.branch {
+                pullArguments.append(contentsOf: ["origin", branch])
+            }
             _ = try gitRunner.run(
-                ["-C", package.directoryURL.path, "pull", "--ff-only"],
+                pullArguments,
                 description: "Update \(package.repositoryName)"
             )
         } else {
+            var cloneArguments = ["clone", "--origin", "origin"]
+            if let branch = package.branch {
+                cloneArguments.append(contentsOf: ["--branch", branch, "--single-branch"])
+            }
+            cloneArguments.append(contentsOf: [package.repositoryURL.absoluteString, package.directoryURL.path])
             _ = try gitRunner.run(
-                ["clone", "--origin", "origin", package.repositoryURL.absoluteString, package.directoryURL.path],
+                cloneArguments,
                 description: "Clone \(package.repositoryName)"
             )
         }
