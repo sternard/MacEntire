@@ -153,8 +153,8 @@ public struct PackageWorkspace: Sendable {
             let resolvedTopLevelURL = URL(
                 fileURLWithPath: resolvedTopLevel,
                 isDirectory: true
-            ).standardizedFileURL
-            guard resolvedTopLevelURL.path == definition.directoryURL.standardizedFileURL.path else {
+            )
+            guard resolvedCheckoutPath(resolvedTopLevelURL) == resolvedCheckoutPath(definition.directoryURL) else {
                 let error = PackageSyncError.destinationIsNotRepository(definition.repositoryName)
                 return ManagedPackage(
                     definition: definition,
@@ -228,4 +228,8 @@ public struct PackageWorkspace: Sendable {
 
 func isSymbolicLink(at url: URL, fileManager: FileManager = .default) -> Bool {
     (try? fileManager.destinationOfSymbolicLink(atPath: url.path)) != nil
+}
+
+func resolvedCheckoutPath(_ url: URL) -> String {
+    url.standardizedFileURL.resolvingSymlinksInPath().path
 }

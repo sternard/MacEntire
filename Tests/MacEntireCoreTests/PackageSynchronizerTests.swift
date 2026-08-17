@@ -243,6 +243,42 @@ final class PackageSynchronizerTests: XCTestCase {
         ])
     }
 
+    func testUpdatesCheckoutUnderSymlinkedWorkspaceAncestor() throws {
+        let physicalRoot = temporaryRoot.appendingPathComponent("PhysicalRoot", isDirectory: true)
+        let linkedRoot = temporaryRoot.appendingPathComponent("LinkedRoot", isDirectory: true)
+        let physicalDirectory = physicalRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: physicalDirectory.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: physicalDirectory.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "#!/usr/bin/env bash\n".write(
+            to: physicalDirectory.appendingPathComponent("scripts/run-app.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.createSymbolicLink(at: linkedRoot, withDestinationURL: physicalRoot)
+        let linkedDirectory = linkedRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: linkedDirectory
+        )
+        let git = FakeGitRunner(topLevelOutput: physicalDirectory.path, statusOutput: "")
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: linkedRoot),
+            gitRunner: git
+        )
+
+        try synchronizer.synchronize(package)
+
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+    }
+
     func testRefusesSymlinkedCheckoutDirectory() throws {
         let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
         let externalDirectory = temporaryRoot.appendingPathComponent("External-Example-App", isDirectory: true)
