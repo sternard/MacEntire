@@ -112,6 +112,33 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testReportsRepositoryResolvedToParentCheckoutAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "#!/usr/bin/env bash\n".write(
+            to: repository.appendingPathComponent("scripts/run-app.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(topLevel: temporaryRoot.path)
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("Storage-Assistant already exists but is not a Git repository.")
+        )
+    }
+
     func testReportsSymlinkedCheckoutDirectoryAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
@@ -194,17 +221,23 @@ final class PackageWorkspaceTests: XCTestCase {
 
 private struct WorkspaceGitRunner: GitRunning {
     let remote: String
+    let topLevel: String?
     let currentBranch: String
 
     init(
         remote: String = "https://github.com/sternard/Storage-Assistant.git",
+        topLevel: String? = nil,
         currentBranch: String = "develop"
     ) {
         self.remote = remote
+        self.topLevel = topLevel
         self.currentBranch = currentBranch
     }
 
     func run(_ arguments: [String], description: String) throws -> String {
+        if arguments.contains("rev-parse") {
+            return topLevel ?? arguments[1]
+        }
         if arguments.contains("branch") {
             return currentBranch
         }

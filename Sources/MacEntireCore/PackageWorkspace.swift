@@ -102,6 +102,31 @@ public struct PackageWorkspace: Sendable {
                 )
             }
 
+            let resolvedTopLevel: String
+            do {
+                resolvedTopLevel = try gitRunner.run(
+                    ["-C", definition.directoryURL.path, "rev-parse", "--show-toplevel"],
+                    description: "Validate \(definition.repositoryName) checkout"
+                )
+            } catch {
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
+            let resolvedTopLevelURL = URL(
+                fileURLWithPath: resolvedTopLevel,
+                isDirectory: true
+            ).standardizedFileURL
+            guard resolvedTopLevelURL.path == definition.directoryURL.standardizedFileURL.path else {
+                let error = PackageSyncError.destinationIsNotRepository(definition.repositoryName)
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
             let remote: String
             do {
                 remote = try gitRunner.run(
