@@ -2,7 +2,7 @@
 
 MacEntire is a deliberately small macOS menu bar launcher for a fixed collection of local Assistant apps.
 
-Unlike Mac Assistant, it does not scan the computer for repositories. The supported repositories are declared in [`packages.txt`](packages.txt), and every managed checkout lives in `Packages/` inside this repository.
+Unlike Mac Assistant, it does not scan the computer for repositories. The supported repositories are declared in [`Packages/packages.txt`](Packages/packages.txt), and every managed checkout lives beside it in `Packages/`.
 
 ## How it works
 
@@ -17,7 +17,7 @@ MacEntire never searches other folders, deletes package files, resets branches, 
 
 ## Package list
 
-Add one GitHub repository per line. Private repositories work when the current user has Git access:
+Add one GitHub repository per line to `Packages/packages.txt`. Private repositories work when the current user has Git access:
 
 ```text
 https://github.com/sternard/Storage-Assistant

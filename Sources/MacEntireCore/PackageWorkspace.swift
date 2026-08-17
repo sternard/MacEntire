@@ -27,9 +27,10 @@ public struct PackageWorkspace: Sendable {
 
     public init(rootDirectory: URL) {
         let root = rootDirectory.standardizedFileURL
+        let packagesDirectory = root.appendingPathComponent("Packages", isDirectory: true)
         self.rootDirectory = root
-        self.packageListURL = root.appendingPathComponent("packages.txt", isDirectory: false)
-        self.packagesDirectory = root.appendingPathComponent("Packages", isDirectory: true)
+        self.packageListURL = packagesDirectory.appendingPathComponent("packages.txt", isDirectory: false)
+        self.packagesDirectory = packagesDirectory
     }
 
     public func definitions() throws -> [PackageDefinition] {

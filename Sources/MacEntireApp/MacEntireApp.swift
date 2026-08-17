@@ -57,12 +57,6 @@ private struct PackageMenu: View {
                 Label("Open Packages Folder", systemImage: "folder")
             }
 
-            Button {
-                catalog.openPackageList()
-            } label: {
-                Label("Open packages.txt", systemImage: "doc.text")
-            }
-
             Divider()
 
             Toggle(
@@ -234,13 +228,6 @@ private final class PackageCatalog: ObservableObject {
             statusMessage = "Could not open Packages: \(error.localizedDescription)"
         }
     }
-
-    func openPackageList() {
-        guard NSWorkspace.shared.open(workspace.packageListURL) else {
-            statusMessage = "Could not open packages.txt"
-            return
-        }
-    }
 }
 
 private enum WorkspaceRoot {
@@ -275,7 +262,10 @@ private enum WorkspaceRoot {
         var candidate = start.standardizedFileURL
 
         for _ in 0..<10 {
-            if FileManager.default.fileExists(atPath: candidate.appendingPathComponent("packages.txt").path) {
+            let packageList = candidate
+                .appendingPathComponent("Packages", isDirectory: true)
+                .appendingPathComponent("packages.txt", isDirectory: false)
+            if FileManager.default.fileExists(atPath: packageList.path) {
                 return candidate
             }
 

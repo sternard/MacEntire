@@ -60,8 +60,10 @@ final class PackageWorkspaceTests: XCTestCase {
     }
 
     private func writePackageList(_ contents: String) throws {
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        try FileManager.default.createDirectory(at: packagesDirectory, withIntermediateDirectories: true)
         try contents.write(
-            to: temporaryRoot.appendingPathComponent("packages.txt"),
+            to: packagesDirectory.appendingPathComponent("packages.txt"),
             atomically: true,
             encoding: .utf8
         )

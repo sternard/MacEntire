@@ -4,3 +4,4 @@
 # Managed repositories are independent projects and must never be committed here.
 Packages/*
 !Packages/.gitkeep
+!Packages/packages.txt
