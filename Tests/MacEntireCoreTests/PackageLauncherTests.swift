@@ -2,6 +2,23 @@ import XCTest
 @testable import MacEntireCore
 
 final class PackageLauncherTests: XCTestCase {
+    func testSuccessfulLaunchCompletionClearsStatusMessage() {
+        XCTAssertNil(packageLaunchCompletionMessage(for: .success(())))
+    }
+
+    func testFailedLaunchCompletionPreservesErrorMessage() {
+        let error = PackageLaunchError.unsuccessfulExit(
+            package: "Example App",
+            status: 7,
+            output: "required tool is missing"
+        )
+
+        XCTAssertEqual(
+            packageLaunchCompletionMessage(for: .failure(error)),
+            "Example App launcher exited with status 7: required tool is missing"
+        )
+    }
+
     func testReportsNonzeroLauncherExitWithCapturedOutput() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)

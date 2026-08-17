@@ -14,6 +14,17 @@ public enum PackageLaunchError: LocalizedError, Equatable, Sendable {
     }
 }
 
+public func packageLaunchCompletionMessage(
+    for result: Result<Void, PackageLaunchError>
+) -> String? {
+    switch result {
+    case .success:
+        return nil
+    case .failure(let error):
+        return error.localizedDescription
+    }
+}
+
 public final class PackageLauncher: @unchecked Sendable {
     static let maximumCapturedOutputBytes = 64 * 1024
 

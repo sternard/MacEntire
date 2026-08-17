@@ -243,9 +243,7 @@ private final class PackageCatalog: ObservableObject {
                         return
                     }
                     operationState.endLaunch()
-                    if case .failure(let error) = result {
-                        statusMessage = error.localizedDescription
-                    }
+                    statusMessage = packageLaunchCompletionMessage(for: result)
                 }
             }
             statusMessage = "Launching \(package.displayName)…"
