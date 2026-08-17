@@ -59,6 +59,21 @@ final class PackageListTests: XCTestCase {
         }
     }
 
+    func testRejectsFullyQualifiedRefsAsBranchOptions() {
+        let entries = [
+            "https://github.com/sternard/Storage-Assistant -b refs/heads/main",
+            "https://github.com/sternard/Storage-Assistant -b refs/tags/release"
+        ]
+
+        for entry in entries {
+            XCTAssertThrowsError(
+                try PackageListParser().parse(entry, packagesDirectory: packagesDirectory)
+            ) { error in
+                XCTAssertEqual(error as? PackageListError, .invalidEntry(line: 1, value: entry))
+            }
+        }
+    }
+
     func testRejectsPackageListFilenameAsDestination() {
         let entries = [
             "https://github.com/sternard/packages.txt",

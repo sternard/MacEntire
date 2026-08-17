@@ -152,6 +152,7 @@ public struct PackageListParser: Sendable {
             && branch != "@"
             && branch != "HEAD"
             && !branch.hasPrefix("-")
+            && !branch.hasPrefix("refs/")
             && !branch.hasSuffix(".")
             && !branch.contains("..")
             && !branch.contains("@{")
