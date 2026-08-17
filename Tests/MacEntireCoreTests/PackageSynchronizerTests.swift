@@ -16,6 +16,189 @@ final class PackageSynchronizerTests: XCTestCase {
         }
     }
 
+    func testMacEntireUpdatePullsAndRestoresCustomizedPackageList() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n"
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        try synchronizer.synchronizeMacEntire()
+
+        XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
+        XCTAssertEqual(git.commands, [
+            ["-C", temporaryRoot.path, "rev-parse", "--show-toplevel"],
+            [
+                "-C", temporaryRoot.path,
+                "restore", "--source=HEAD", "--staged", "--worktree", "--", "Packages/packages.txt"
+            ],
+            ["-C", temporaryRoot.path, "fetch"],
+            ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"]
+        ])
+    }
+
+    func testMacEntireUpdateFastForwardsRealRepositoryAndPreservesCustomizedPackageList() throws {
+        let remote = temporaryRoot.appendingPathComponent("Remote.git", isDirectory: true)
+        let source = temporaryRoot.appendingPathComponent("Source", isDirectory: true)
+        let checkout = temporaryRoot.appendingPathComponent("Checkout", isDirectory: true)
+        let git = ProcessGitRunner(timeout: 30)
+
+        _ = try git.run(["init", "--bare", remote.path], description: "Create test remote")
+        _ = try git.run(["init", source.path], description: "Create test source")
+        _ = try git.run(
+            ["-C", source.path, "config", "user.name", "MacEntire Tests"],
+            description: "Configure test Git name"
+        )
+        _ = try git.run(
+            ["-C", source.path, "config", "user.email", "tests@macentire.local"],
+            description: "Configure test Git email"
+        )
+
+        let sourcePackages = source.appendingPathComponent("Packages", isDirectory: true)
+        try FileManager.default.createDirectory(at: sourcePackages, withIntermediateDirectories: true)
+        try "committed package list\n".write(
+            to: sourcePackages.appendingPathComponent("packages.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "version one\n".write(
+            to: source.appendingPathComponent("README.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        _ = try git.run(["-C", source.path, "add", "."], description: "Stage initial test files")
+        _ = try git.run(["-C", source.path, "commit", "-m", "Initial"], description: "Commit initial test files")
+        let branch = try git.run(
+            ["-C", source.path, "branch", "--show-current"],
+            description: "Read test branch"
+        )
+        _ = try git.run(
+            ["-C", source.path, "remote", "add", "origin", remote.path],
+            description: "Add test remote"
+        )
+        _ = try git.run(
+            ["-C", source.path, "push", "--set-upstream", "origin", branch],
+            description: "Push initial test files"
+        )
+        _ = try git.run(
+            ["--git-dir", remote.path, "symbolic-ref", "HEAD", "refs/heads/\(branch)"],
+            description: "Set test remote HEAD"
+        )
+        _ = try git.run(["clone", remote.path, checkout.path], description: "Clone test checkout")
+
+        let checkoutPackageList = checkout.appendingPathComponent("Packages/packages.txt")
+        try "custom package list\n".write(
+            to: checkoutPackageList,
+            atomically: true,
+            encoding: .utf8
+        )
+        try "version two\n".write(
+            to: source.appendingPathComponent("README.md"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "upstream package list\n".write(
+            to: sourcePackages.appendingPathComponent("packages.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        _ = try git.run(["-C", source.path, "add", "."], description: "Stage upstream test update")
+        _ = try git.run(
+            ["-C", source.path, "commit", "-m", "Update"],
+            description: "Commit upstream test update"
+        )
+        _ = try git.run(["-C", source.path, "push"], description: "Push upstream test update")
+
+        try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: checkout),
+            gitRunner: git
+        ).synchronizeMacEntire()
+
+        XCTAssertEqual(
+            try String(contentsOf: checkoutPackageList, encoding: .utf8),
+            "custom package list\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: checkout.appendingPathComponent("README.md"), encoding: .utf8),
+            "version two\n"
+        )
+        XCTAssertEqual(
+            try git.run(
+                ["-C", checkout.path, "status", "--porcelain", "--", "Packages/packages.txt"],
+                description: "Check preserved test customization"
+            ),
+            "M Packages/packages.txt"
+        )
+    }
+
+    func testMacEntireUpdateRestoresCustomizedPackageListWhenPullFails() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "partially updated package list\n",
+            updateError: .commandFailed(command: "Update MacEntire", output: "network unavailable")
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronizeMacEntire()) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .commandFailed(command: "Update MacEntire", output: "network unavailable")
+            )
+        }
+        XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
+    }
+
+    func testMacEntireUpdateRefusesToPullFromParentRepository() throws {
+        _ = try writePackageList("custom package list\n")
+        let parentRoot = temporaryRoot.deletingLastPathComponent()
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: parentRoot,
+            packageListURL: temporaryRoot.appendingPathComponent("Packages/packages.txt"),
+            updatedPackageList: "upstream package list\n"
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronizeMacEntire()) { error in
+            XCTAssertEqual(error as? PackageSyncError, .macEntireIsNotRepository)
+        }
+        XCTAssertFalse(git.commands.contains { $0.contains("fetch") || $0.contains("merge") })
+    }
+
+    func testSynchronizeAllReportsMacEntireFailureWithoutThrowing() throws {
+        let packageList = try writePackageList("")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "",
+            updateError: .commandFailed(command: "Update MacEntire", output: "network unavailable")
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        let summary = try synchronizer.synchronizeAll()
+
+        XCTAssertEqual(
+            summary.macEntireErrorMessage,
+            "Update MacEntire failed: network unavailable"
+        )
+        XCTAssertTrue(summary.packageResults.isEmpty)
+    }
+
     func testRefusesToUpdateRepositoryWithLocalChanges() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(statusOutput: " M README.md")
@@ -360,6 +543,58 @@ final class PackageSynchronizerTests: XCTestCase {
             branch: branch,
             directoryURL: directory
         )
+    }
+
+    @discardableResult
+    private func writePackageList(_ contents: String) throws -> URL {
+        let packageList = temporaryRoot.appendingPathComponent("Packages/packages.txt")
+        try FileManager.default.createDirectory(
+            at: packageList.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try contents.write(to: packageList, atomically: true, encoding: .utf8)
+        return packageList
+    }
+}
+
+private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
+    private(set) var commands: [[String]] = []
+    private let rootDirectory: URL
+    private let packageListURL: URL
+    private let updatedPackageList: String
+    private let updateError: PackageSyncError?
+
+    init(
+        rootDirectory: URL,
+        packageListURL: URL,
+        updatedPackageList: String,
+        updateError: PackageSyncError? = nil
+    ) {
+        self.rootDirectory = rootDirectory
+        self.packageListURL = packageListURL
+        self.updatedPackageList = updatedPackageList
+        self.updateError = updateError
+    }
+
+    func run(_ arguments: [String], description: String) throws -> String {
+        commands.append(arguments)
+        if arguments.contains("rev-parse") {
+            return rootDirectory.path
+        }
+        if arguments.contains("restore") {
+            try "committed package list\n".write(
+                to: packageListURL,
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+        if arguments.contains("merge") {
+            try updatedPackageList.write(to: packageListURL, atomically: true, encoding: .utf8)
+            if let updateError {
+                throw updateError
+            }
+        }
+        return ""
     }
 }
 

@@ -15,6 +15,16 @@ public struct PackageSyncResult: Equatable, Sendable {
     }
 }
 
+public struct SynchronizationSummary: Equatable, Sendable {
+    public let macEntireErrorMessage: String?
+    public let packageResults: [PackageSyncResult]
+
+    public init(macEntireErrorMessage: String? = nil, packageResults: [PackageSyncResult]) {
+        self.macEntireErrorMessage = macEntireErrorMessage
+        self.packageResults = packageResults
+    }
+}
+
 public enum PackageSyncError: LocalizedError, Equatable {
     case destinationIsNotRepository(String)
     case symbolicLinkCheckout(String)
@@ -23,6 +33,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case detachedHead(String)
     case localChanges(String)
     case missingLauncher(String)
+    case macEntireIsNotRepository
+    case packageListRestorationFailed(String)
     case commandFailed(command: String, output: String)
     case commandTimedOut(command: String)
 
@@ -42,6 +54,10 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) has local changes; update skipped."
         case .missingLauncher(let name):
             return "\(name) does not contain scripts/run-app.sh."
+        case .macEntireIsNotRepository:
+            return "The configured MacEntire root is not the root of a Git repository."
+        case .packageListRestorationFailed(let detail):
+            return "Could not restore Packages/packages.txt after updating MacEntire: \(detail)"
         case .commandFailed(let command, let output):
             let detail = output.isEmpty ? "Git returned an error." : output
             return "\(command) failed: \(detail)"
@@ -172,14 +188,82 @@ public final class PackageSynchronizer: @unchecked Sendable {
         self.gitRunner = gitRunner
     }
 
-    public func synchronizeAll() throws -> [PackageSyncResult] {
-        try workspace.definitions().map { package in
+    public func synchronizeAll() throws -> SynchronizationSummary {
+        let macEntireErrorMessage: String?
+        do {
+            try synchronizeMacEntire()
+            macEntireErrorMessage = nil
+        } catch {
+            macEntireErrorMessage = error.localizedDescription
+        }
+
+        let packageResults = try workspace.definitions().map { package in
             do {
                 try synchronize(package)
                 return PackageSyncResult(package: package)
             } catch {
                 return PackageSyncResult(package: package, errorMessage: error.localizedDescription)
             }
+        }
+
+        return SynchronizationSummary(
+            macEntireErrorMessage: macEntireErrorMessage,
+            packageResults: packageResults
+        )
+    }
+
+    func synchronizeMacEntire() throws {
+        let rootDirectory = workspace.rootDirectory
+        let resolvedTopLevel = try gitRunner.run(
+            ["-C", rootDirectory.path, "rev-parse", "--show-toplevel"],
+            description: "Validate MacEntire checkout"
+        )
+        let resolvedTopLevelURL = URL(fileURLWithPath: resolvedTopLevel, isDirectory: true)
+        guard resolvedCheckoutPath(resolvedTopLevelURL) == resolvedCheckoutPath(rootDirectory) else {
+            throw PackageSyncError.macEntireIsNotRepository
+        }
+
+        let preservedPackageList: Data
+        do {
+            preservedPackageList = try Data(contentsOf: workspace.packageListURL)
+        } catch {
+            throw PackageListError.unreadableFile(workspace.packageListURL.path)
+        }
+
+        let packageListPath = "Packages/\(PackageListParser.packageListFilename)"
+        var updateError: Error?
+        do {
+            _ = try gitRunner.run(
+                [
+                    "-C", rootDirectory.path,
+                    "restore", "--source=HEAD", "--staged", "--worktree", "--", packageListPath
+                ],
+                description: "Prepare MacEntire update"
+            )
+            _ = try gitRunner.run(
+                ["-C", rootDirectory.path, "fetch"],
+                description: "Fetch MacEntire"
+            )
+            _ = try gitRunner.run(
+                ["-C", rootDirectory.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
+                description: "Update MacEntire"
+            )
+        } catch {
+            updateError = error
+        }
+
+        do {
+            try FileManager.default.createDirectory(
+                at: workspace.packagesDirectory,
+                withIntermediateDirectories: true
+            )
+            try preservedPackageList.write(to: workspace.packageListURL, options: .atomic)
+        } catch {
+            throw PackageSyncError.packageListRestorationFailed(error.localizedDescription)
+        }
+
+        if let updateError {
+            throw updateError
         }
     }
 

@@ -8,10 +8,11 @@ Unlike Mac Assistant, it does not scan the computer for repositories. The suppor
 
 Open the menu bar item and choose **Sync Packages**. MacEntire will:
 
-1. Clone missing repositories into `Packages/<repository-name>`.
-2. Fetch the checked-out or configured branch from the verified `origin`, then fast-forward it.
-3. Refuse to update a checkout with local changes, an unexpected `origin` remote, the wrong configured branch, or an update that would overwrite an ignored file.
-4. Show apps containing `scripts/run-app.sh` as launchable menu items.
+1. Fast-forward its own Git checkout while preserving the local contents of `Packages/packages.txt`.
+2. Clone missing repositories into `Packages/<repository-name>`.
+3. Fetch the checked-out or configured branch from the verified `origin`, then fast-forward it.
+4. Refuse to update a checkout with local changes, an unexpected `origin` remote, the wrong configured branch, or an update that would overwrite an ignored file.
+5. Show apps containing `scripts/run-app.sh` as launchable menu items.
 
 MacEntire never searches other folders, deletes package files, resets branches, or overwrites local changes, including ignored files.
 
