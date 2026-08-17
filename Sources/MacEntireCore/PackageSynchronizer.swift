@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 public struct PackageSyncResult: Equatable, Sendable {
@@ -23,6 +24,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case localChanges(String)
     case missingLauncher(String)
     case commandFailed(command: String, output: String)
+    case commandTimedOut(command: String)
 
     public var errorDescription: String? {
         switch self {
@@ -43,6 +45,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
         case .commandFailed(let command, let output):
             let detail = output.isEmpty ? "Git returned an error." : output
             return "\(command) failed: \(detail)"
+        case .commandTimedOut(let command):
+            return "\(command) timed out; check the network and try again."
         }
     }
 }
@@ -52,15 +56,50 @@ public protocol GitRunning: Sendable {
 }
 
 public struct ProcessGitRunner: GitRunning, Sendable {
-    public init() {}
+    public static let defaultTimeout: TimeInterval = 5 * 60
+
+    private let executableURL: URL
+    private let timeout: TimeInterval
+
+    public init(
+        executableURL: URL = URL(fileURLWithPath: "/usr/bin/git"),
+        timeout: TimeInterval = defaultTimeout
+    ) {
+        self.executableURL = executableURL
+        self.timeout = timeout
+    }
 
     public func run(_ arguments: [String], description: String) throws -> String {
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireGit-\(UUID().uuidString).log", isDirectory: false)
+        guard FileManager.default.createFile(atPath: outputURL.path, contents: nil) else {
+            throw PackageSyncError.commandFailed(
+                command: description,
+                output: "Could not create temporary command output."
+            )
+        }
+
+        let outputHandle: FileHandle
+        do {
+            outputHandle = try FileHandle(forWritingTo: outputURL)
+        } catch {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw PackageSyncError.commandFailed(command: description, output: error.localizedDescription)
+        }
+        defer {
+            try? outputHandle.close()
+            try? FileManager.default.removeItem(at: outputURL)
+        }
+
         let process = Process()
-        let outputPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        let termination = DispatchSemaphore(value: 0)
+        process.executableURL = executableURL
         process.arguments = arguments
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
+        process.standardOutput = outputHandle
+        process.standardError = outputHandle
+        process.terminationHandler = { _ in
+            termination.signal()
+        }
 
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
@@ -72,10 +111,17 @@ public struct ProcessGitRunner: GitRunning, Sendable {
             throw PackageSyncError.commandFailed(command: description, output: error.localizedDescription)
         }
 
-        let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-        process.waitUntilExit()
-        let output = String(decoding: data, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard termination.wait(timeout: .now() + max(timeout, 0)) == .success else {
+            process.terminate()
+            if termination.wait(timeout: .now() + 1) == .timedOut {
+                _ = Darwin.kill(process.processIdentifier, SIGKILL)
+                _ = termination.wait(timeout: .now() + 1)
+            }
+            throw PackageSyncError.commandTimedOut(command: description)
+        }
+
+        try? outputHandle.close()
+        let output = capturedGitOutput(at: outputURL)
 
         guard process.terminationStatus == 0 else {
             throw PackageSyncError.commandFailed(command: description, output: output)
@@ -83,6 +129,23 @@ public struct ProcessGitRunner: GitRunning, Sendable {
 
         return output
     }
+}
+
+private func capturedGitOutput(at url: URL, maximumBytes: UInt64 = 256 * 1024) -> String {
+    guard let handle = try? FileHandle(forReadingFrom: url) else {
+        return ""
+    }
+    defer { try? handle.close() }
+
+    let length = (try? handle.seekToEnd()) ?? 0
+    if length > maximumBytes {
+        try? handle.seek(toOffset: length - maximumBytes)
+    } else {
+        try? handle.seek(toOffset: 0)
+    }
+    let data = (try? handle.readToEnd()) ?? Data()
+    return String(decoding: data, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 public final class PackageSynchronizer: @unchecked Sendable {
