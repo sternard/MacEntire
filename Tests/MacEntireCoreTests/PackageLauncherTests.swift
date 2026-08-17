@@ -38,6 +38,45 @@ final class PackageLauncherTests: XCTestCase {
             .unsuccessfulExit(package: "Example App", status: 7, output: "required tool is missing")
         )
     }
+
+    func testCapturesOnlyBoundedTailOfLauncherOutput() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
+        let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
+        try """
+        /usr/bin/yes x | /usr/bin/head -c 70000
+        printf '\nTAIL-MARKER\n' >&2
+        exit 7
+        """.write(to: launcherURL, atomically: true, encoding: .utf8)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: temporaryRoot
+        )
+        let completionExpectation = expectation(description: "Launcher completion")
+        let launchError = LockedBox<PackageLaunchError?>(nil)
+        let launcher = PackageLauncher()
+
+        try launcher.launch(package) { result in
+            if case .failure(let error) = result {
+                launchError.set(error)
+            }
+            completionExpectation.fulfill()
+        }
+
+        wait(for: [completionExpectation], timeout: 2)
+        guard case .unsuccessfulExit(_, let status, let output) = launchError.get() else {
+            return XCTFail("Expected a failed launcher result")
+        }
+        XCTAssertEqual(status, 7)
+        XCTAssertTrue(output.hasSuffix("TAIL-MARKER"))
+        XCTAssertLessThanOrEqual(output.utf8.count, PackageLauncher.maximumCapturedOutputBytes)
+    }
 }
 
 private final class LockedBox<Value>: @unchecked Sendable {

@@ -15,6 +15,8 @@ public enum PackageLaunchError: LocalizedError, Equatable, Sendable {
 }
 
 public final class PackageLauncher: @unchecked Sendable {
+    static let maximumCapturedOutputBytes = 64 * 1024
+
     private let lock = NSLock()
     private var runningProcesses: [UUID: Process] = [:]
 
@@ -34,7 +36,11 @@ public final class PackageLauncher: @unchecked Sendable {
         let outputHandle = try FileHandle(forWritingTo: outputURL)
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [package.launcherURL.path]
+        process.arguments = [
+            "-o", "pipefail", "-c",
+            "\"$@\" 2>&1 | /usr/bin/tail -c \(Self.maximumCapturedOutputBytes)",
+            "macentire-launcher", "/bin/bash", package.launcherURL.path
+        ]
         process.currentDirectoryURL = package.directoryURL
         process.standardOutput = outputHandle
         process.standardError = outputHandle
