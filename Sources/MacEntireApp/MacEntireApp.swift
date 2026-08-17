@@ -59,13 +59,14 @@ private struct PackageMenu: View {
 
             Divider()
 
-            Toggle(
-                "Start on Login",
-                isOn: Binding(
-                    get: { loginItem.isEnabled },
-                    set: { loginItem.setEnabled($0) }
+            Button {
+                loginItem.setEnabled(!loginItem.isEnabled)
+            } label: {
+                Label(
+                    "Start on Login",
+                    systemImage: loginItem.isEnabled ? "checkmark" : "xmark"
                 )
-            )
+            }
 
             if let statusMessage = loginItem.statusMessage {
                 Text(statusMessage)
@@ -184,7 +185,9 @@ private final class PackageCatalog: ObservableObject {
                 guard generation == refreshGeneration else {
                     return
                 }
-                packages = inspectedPackages
+                packages = inspectedPackages.sorted {
+                    $0.definition.displayName.localizedCaseInsensitiveCompare($1.definition.displayName) == .orderedAscending
+                }
                 if packages.isEmpty {
                     statusMessage = "No packages configured"
                 } else if statusMessage == "No packages configured" {
