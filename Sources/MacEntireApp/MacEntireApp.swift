@@ -153,6 +153,7 @@ private final class PackageCatalog: ObservableObject {
 
     private let workspace: PackageWorkspace
     private let synchronizer: PackageSynchronizer
+    private let launcher = PackageLauncher()
 
     init(rootDirectory: URL = WorkspaceRoot.resolve()) {
         let workspace = PackageWorkspace(rootDirectory: rootDirectory)
@@ -208,13 +209,15 @@ private final class PackageCatalog: ObservableObject {
     }
 
     func launch(_ package: PackageDefinition) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [package.launcherURL.path]
-        process.currentDirectoryURL = package.directoryURL
-
         do {
-            try process.run()
+            try launcher.launch(package) { [weak self] result in
+                guard case .failure(let error) = result else {
+                    return
+                }
+                Task { @MainActor [weak self] in
+                    self?.statusMessage = error.localizedDescription
+                }
+            }
             statusMessage = "Launching \(package.displayName)…"
         } catch {
             statusMessage = "Could not launch \(package.displayName): \(error.localizedDescription)"
