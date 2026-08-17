@@ -121,7 +121,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ["-C", package.directoryURL.path, "remote", "get-url", "origin"],
                 description: "Read \(package.repositoryName) origin"
             )
-            guard normalizedRemote(remote) == normalizedRemote(package.repositoryURL.absoluteString) else {
+            guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
                 throw PackageSyncError.remoteMismatch(
                     expected: package.repositoryURL.absoluteString,
                     actual: remote.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -178,19 +178,23 @@ public final class PackageSynchronizer: @unchecked Sendable {
             )
         }
 
-        guard FileManager.default.fileExists(atPath: package.launcherURL.path) else {
+        var launcherIsDirectory: ObjCBool = false
+        guard
+            FileManager.default.fileExists(atPath: package.launcherURL.path, isDirectory: &launcherIsDirectory),
+            !launcherIsDirectory.boolValue
+        else {
             throw PackageSyncError.missingLauncher(package.repositoryName)
         }
     }
+}
 
-    private func normalizedRemote(_ value: String) -> String {
-        var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        while normalized.hasSuffix("/") {
-            normalized.removeLast()
-        }
-        if normalized.lowercased().hasSuffix(".git") {
-            normalized.removeLast(4)
-        }
-        return normalized.lowercased()
+func normalizedGitRemote(_ value: String) -> String {
+    var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    while normalized.hasSuffix("/") {
+        normalized.removeLast()
     }
+    if normalized.lowercased().hasSuffix(".git") {
+        normalized.removeLast(4)
+    }
+    return normalized.lowercased()
 }

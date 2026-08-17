@@ -42,9 +42,43 @@ final class PackageWorkspaceTests: XCTestCase {
             encoding: .utf8
         )
 
-        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages()
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner()
+        )
 
         XCTAssertEqual(packages.first?.state, .ready)
+    }
+
+    func testReportsRepositoryWithUnexpectedOriginAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "#!/usr/bin/env bash\n".write(
+            to: repository.appendingPathComponent("scripts/run-app.sh"),
+            atomically: true,
+            encoding: .utf8
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(
+                remote: "https://github.com/someone-else/Storage-Assistant.git"
+            )
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable(
+                "Origin is https://github.com/someone-else/Storage-Assistant.git, "
+                    + "expected https://github.com/sternard/Storage-Assistant."
+            )
+        )
     }
 
     func testReportsRepositoryWithoutLauncherAsUnavailable() throws {
@@ -67,5 +101,17 @@ final class PackageWorkspaceTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
+    }
+}
+
+private struct WorkspaceGitRunner: GitRunning {
+    let remote: String
+
+    init(remote: String = "https://github.com/sternard/Storage-Assistant.git") {
+        self.remote = remote
+    }
+
+    func run(_ arguments: [String], description: String) throws -> String {
+        remote
     }
 }

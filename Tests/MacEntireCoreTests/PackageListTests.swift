@@ -49,6 +49,32 @@ final class PackageListTests: XCTestCase {
         }
     }
 
+    func testRejectsHEADBranch() {
+        let entry = "https://github.com/sternard/Storage-Assistant -b HEAD"
+
+        XCTAssertThrowsError(
+            try PackageListParser().parse(entry, packagesDirectory: packagesDirectory)
+        ) { error in
+            XCTAssertEqual(error as? PackageListError, .invalidEntry(line: 1, value: entry))
+        }
+    }
+
+    func testRejectsPackageListFilenameAsDestination() {
+        let entries = [
+            "https://github.com/sternard/packages.txt",
+            "https://github.com/sternard/packages.txt.git",
+            "https://github.com/sternard/PACKAGES.TXT"
+        ]
+
+        for entry in entries {
+            XCTAssertThrowsError(
+                try PackageListParser().parse(entry, packagesDirectory: packagesDirectory)
+            ) { error in
+                XCTAssertEqual(error as? PackageListError, .invalidEntry(line: 1, value: entry))
+            }
+        }
+    }
+
     func testRejectsDuplicateDestinationNames() {
         let contents = """
         https://github.com/first/Example-App

@@ -48,6 +48,8 @@ public enum PackageListError: LocalizedError, Equatable {
 }
 
 public struct PackageListParser: Sendable {
+    static let packageListFilename = "packages.txt"
+
     public init() {}
 
     public func parse(_ contents: String, packagesDirectory: URL) throws -> [PackageDefinition] {
@@ -69,7 +71,12 @@ public struct PackageListParser: Sendable {
                 throw PackageListError.invalidEntry(line: lineNumber, value: line)
             }
 
-            guard directoryNames.insert(parsed.repositoryName.lowercased()).inserted else {
+            let normalizedDirectoryName = parsed.repositoryName.lowercased()
+            guard normalizedDirectoryName != Self.packageListFilename else {
+                throw PackageListError.invalidEntry(line: lineNumber, value: line)
+            }
+
+            guard directoryNames.insert(normalizedDirectoryName).inserted else {
                 throw PackageListError.duplicateDirectory(line: lineNumber, name: parsed.repositoryName)
             }
 
@@ -139,6 +146,7 @@ public struct PackageListParser: Sendable {
 
         return !branch.isEmpty
             && branch != "@"
+            && branch != "HEAD"
             && !branch.hasPrefix("-")
             && !branch.hasSuffix(".")
             && !branch.contains("..")

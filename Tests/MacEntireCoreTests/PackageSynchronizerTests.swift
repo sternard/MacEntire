@@ -153,6 +153,36 @@ final class PackageSynchronizerTests: XCTestCase {
         })
     }
 
+    func testRefusesLauncherDirectory() throws {
+        let package = try makeInstalledPackage()
+        try FileManager.default.removeItem(at: package.launcherURL)
+        try FileManager.default.createDirectory(at: package.launcherURL, withIntermediateDirectories: false)
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: FakeGitRunner(statusOutput: "")
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, .missingLauncher("Example-App"))
+        }
+    }
+
+    func testRefusesLauncherSymlinkToDirectory() throws {
+        let package = try makeInstalledPackage()
+        try FileManager.default.removeItem(at: package.launcherURL)
+        let launcherDirectory = package.directoryURL.appendingPathComponent("LauncherDirectory", isDirectory: true)
+        try FileManager.default.createDirectory(at: launcherDirectory, withIntermediateDirectories: false)
+        try FileManager.default.createSymbolicLink(at: package.launcherURL, withDestinationURL: launcherDirectory)
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: FakeGitRunner(statusOutput: "")
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, .missingLauncher("Example-App"))
+        }
+    }
+
     private func makeInstalledPackage(branch: String? = nil) throws -> PackageDefinition {
         let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
         try FileManager.default.createDirectory(

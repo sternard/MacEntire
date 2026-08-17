@@ -29,7 +29,10 @@ public struct PackageWorkspace: Sendable {
         let root = rootDirectory.standardizedFileURL
         let packagesDirectory = root.appendingPathComponent("Packages", isDirectory: true)
         self.rootDirectory = root
-        self.packageListURL = packagesDirectory.appendingPathComponent("packages.txt", isDirectory: false)
+        self.packageListURL = packagesDirectory.appendingPathComponent(
+            PackageListParser.packageListFilename,
+            isDirectory: false
+        )
         self.packagesDirectory = packagesDirectory
     }
 
@@ -41,7 +44,10 @@ public struct PackageWorkspace: Sendable {
         return try PackageListParser().parse(contents, packagesDirectory: packagesDirectory)
     }
 
-    public func packages(fileManager: FileManager = .default) throws -> [ManagedPackage] {
+    public func packages(
+        fileManager: FileManager = .default,
+        gitRunner: any GitRunning = ProcessGitRunner()
+    ) throws -> [ManagedPackage] {
         try definitions().map { definition in
             var isDirectory: ObjCBool = false
             guard fileManager.fileExists(atPath: definition.directoryURL.path, isDirectory: &isDirectory) else {
@@ -70,6 +76,30 @@ public struct PackageWorkspace: Sendable {
                 return ManagedPackage(
                     definition: definition,
                     state: .unavailable("Missing scripts/run-app.sh")
+                )
+            }
+
+            let remote: String
+            do {
+                remote = try gitRunner.run(
+                    ["-C", definition.directoryURL.path, "remote", "get-url", "origin"],
+                    description: "Read \(definition.repositoryName) origin"
+                )
+            } catch {
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
+            guard normalizedGitRemote(remote) == normalizedGitRemote(definition.repositoryURL.absoluteString) else {
+                let error = PackageSyncError.remoteMismatch(
+                    expected: definition.repositoryURL.absoluteString,
+                    actual: remote.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
                 )
             }
 
