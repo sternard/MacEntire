@@ -175,14 +175,14 @@ private final class PackageCatalog: ObservableObject {
         refresh()
     }
 
-    func refresh() {
+    func refresh(forceInspection: Bool = false) {
         refreshGeneration += 1
         let generation = refreshGeneration
         let inspector = inspector
 
         Task {
             do {
-                let inspectedPackages = try await inspector.packages()
+                let inspectedPackages = try await inspector.packages(forceRefresh: forceInspection)
                 guard generation == refreshGeneration else {
                     return
                 }
@@ -237,7 +237,7 @@ private final class PackageCatalog: ObservableObject {
             case .failure(let error):
                 statusMessage = error.localizedDescription
             }
-            refresh()
+            refresh(forceInspection: true)
         }
     }
 

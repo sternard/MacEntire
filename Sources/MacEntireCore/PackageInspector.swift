@@ -1,9 +1,14 @@
 import Foundation
 
 public actor PackageInspector {
+    private struct InFlightInspection {
+        let identifier: UUID
+        let task: Task<[ManagedPackage], Error>
+    }
+
     private let workspace: PackageWorkspace
     private let gitRunner: any GitRunning
-    private var inFlightInspection: Task<[ManagedPackage], Error>?
+    private var inFlightInspection: InFlightInspection?
 
     public init(
         workspace: PackageWorkspace,
@@ -13,18 +18,35 @@ public actor PackageInspector {
         self.gitRunner = gitRunner
     }
 
-    public func packages() async throws -> [ManagedPackage] {
+    public func packages(forceRefresh: Bool = false) async throws -> [ManagedPackage] {
         if let inFlightInspection {
-            return try await inFlightInspection.value
+            guard forceRefresh else {
+                return try await inFlightInspection.task.value
+            }
+
+            _ = try? await inFlightInspection.task.value
+            if let newerInspection = self.inFlightInspection,
+               newerInspection.identifier != inFlightInspection.identifier {
+                return try await newerInspection.task.value
+            }
         }
 
+        return try await startInspection()
+    }
+
+    private func startInspection() async throws -> [ManagedPackage] {
         let workspace = workspace
         let gitRunner = gitRunner
+        let identifier = UUID()
         let inspection = Task.detached(priority: .userInitiated) {
             try workspace.packages(gitRunner: gitRunner)
         }
-        inFlightInspection = inspection
-        defer { inFlightInspection = nil }
+        inFlightInspection = InFlightInspection(identifier: identifier, task: inspection)
+        defer {
+            if inFlightInspection?.identifier == identifier {
+                inFlightInspection = nil
+            }
+        }
         return try await inspection.value
     }
 }
