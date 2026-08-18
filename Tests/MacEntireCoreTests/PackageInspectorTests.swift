@@ -193,6 +193,9 @@ private final class InspectionGitRunner: GitRunning, @unchecked Sendable {
         calledOnMainThread = calledOnMainThread || Thread.isMainThread
         lock.unlock()
 
+        if arguments.suffix(2) == ["rev-parse", "--absolute-git-dir"] {
+            return "\(arguments[1])/.git"
+        }
         if arguments.contains("rev-parse") {
             return arguments[1]
         }
@@ -219,6 +222,9 @@ private final class BlockingInspectionGitRunner: GitRunning, @unchecked Sendable
     }
 
     func run(_ arguments: [String], description: String) throws -> String {
+        if arguments.suffix(2) == ["rev-parse", "--absolute-git-dir"] {
+            return "\(arguments[1])/.git"
+        }
         if arguments.contains("rev-parse") {
             lock.lock()
             topLevelCalls += 1
