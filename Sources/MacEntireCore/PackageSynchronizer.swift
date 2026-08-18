@@ -1053,10 +1053,19 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
             let cloneDestination = checkoutDirectory.url
             cloneArguments.append(contentsOf: [package.repositoryURL.absoluteString, cloneDestination.path])
-            _ = try gitRunner.run(
-                cloneArguments,
-                description: "Clone \(package.repositoryName)"
-            )
+            do {
+                _ = try gitRunner.run(
+                    cloneArguments,
+                    description: "Clone \(package.repositoryName)"
+                )
+            } catch {
+                removeReservedCheckoutAfterCloneFailure(
+                    checkoutDirectory,
+                    named: package.repositoryName,
+                    from: packagesDirectory
+                )
+                throw error
+            }
 
             let checkoutURL = checkoutDirectory.url
 
@@ -1222,6 +1231,30 @@ func reserveManagedCheckout(
         throw PackageSyncError.destinationIsNotRepository(repositoryName)
     }
     return checkoutDirectory
+}
+
+private func removeReservedCheckoutAfterCloneFailure(
+    _ checkoutDirectory: StableDirectoryHandle,
+    named repositoryName: String,
+    from packagesDirectory: StableDirectoryHandle,
+    fileManager: FileManager = .default
+) {
+    let entries = (try? fileManager.contentsOfDirectory(
+        at: checkoutDirectory.url,
+        includingPropertiesForKeys: nil
+    )) ?? []
+    for entry in entries {
+        try? fileManager.removeItem(at: entry)
+    }
+
+    let visibleCheckout = packagesDirectory.url.appendingPathComponent(
+        repositoryName,
+        isDirectory: true
+    )
+    guard checkoutDirectory.matches(visibleCheckout) else {
+        return
+    }
+    _ = unlinkat(packagesDirectory.descriptor, repositoryName, AT_REMOVEDIR)
 }
 
 private struct GitFileEntry: Equatable {
