@@ -472,6 +472,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
         guard resolvedCheckoutPath(resolvedTopLevelURL) == resolvedCheckoutPath(rootDirectory) else {
             throw PackageSyncError.macEntireIsNotRepository
         }
+        let originalBranch = try gitRunner.run(
+            ["-C", rootDirectory.path, "branch", "--show-current"],
+            description: "Read MacEntire branch"
+        )
+        guard !originalBranch.isEmpty else {
+            throw PackageSyncError.detachedHead("MacEntire")
+        }
         let originalRevision = try gitRunner.run(
             ["-C", rootDirectory.path, "rev-parse", "HEAD"],
             description: "Read current MacEntire revision"
@@ -512,6 +519,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         let packageListHadStagedChanges = preservedIndexEntry != headIndexEntry
         var packageListIndexTokenAfterLastUpdate: FileChangeToken?
         var packageListIndexWasTouchedDuringUpdate = false
+        var preservePostFetchCheckoutState = false
         var updateError: Error?
         var updatedRevision = originalRevision
         do {
@@ -530,6 +538,22 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ["-C", rootDirectory.path, "fetch"],
                 description: "Fetch MacEntire"
             )
+            preservePostFetchCheckoutState = true
+            let branchAfterFetch = try gitRunner.run(
+                ["-C", rootDirectory.path, "branch", "--show-current"],
+                description: "Revalidate MacEntire branch"
+            )
+            guard !branchAfterFetch.isEmpty else {
+                throw PackageSyncError.detachedHead("MacEntire")
+            }
+            guard branchAfterFetch == originalBranch else {
+                throw PackageSyncError.branchMismatch(
+                    repository: "MacEntire",
+                    expected: originalBranch,
+                    actual: branchAfterFetch
+                )
+            }
+            preservePostFetchCheckoutState = false
             if let packageListIndexTokenAfterLastUpdate {
                 packageListIndexWasTouchedDuringUpdate = try fileChangeToken(
                     at: packageListIndexURL,
@@ -537,7 +561,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ) != packageListIndexTokenAfterLastUpdate
             }
             _ = try gitRunner.run(
-                ["-C", rootDirectory.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
+                [
+                    "-C", rootDirectory.path,
+                    "merge", "--ff-only", "--no-overwrite-ignore", "\(originalBranch)@{upstream}"
+                ],
                 description: "Update MacEntire"
             )
             packageListIndexTokenAfterLastUpdate = try fileChangeToken(
@@ -553,24 +580,26 @@ public final class PackageSynchronizer: @unchecked Sendable {
         }
 
         var restorationError: Error?
-        var packageListWasEditedDuringUpdate = false
-        var packageListWasStagedDuringUpdate = false
-        do {
-            let packageListStatus = try gitRunner.run(
-                [
-                    "--no-optional-locks", "-C", rootDirectory.path,
-                    "status", "--porcelain", "--", packageListPath
-                ],
-                description: "Check for concurrent MacEntire package list edits"
-            )
-            packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
-            packageListWasStagedDuringUpdate = packageListStatus.first.map {
-                $0 != " "
-            } ?? false
-        } catch {
-            restorationError = error
+        var packageListWasEditedDuringUpdate = preservePostFetchCheckoutState
+        var packageListWasStagedDuringUpdate = preservePostFetchCheckoutState
+        if !preservePostFetchCheckoutState {
+            do {
+                let packageListStatus = try gitRunner.run(
+                    [
+                        "--no-optional-locks", "-C", rootDirectory.path,
+                        "status", "--porcelain", "--", packageListPath
+                    ],
+                    description: "Check for concurrent MacEntire package list edits"
+                )
+                packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
+                packageListWasStagedDuringUpdate = packageListStatus.first.map {
+                    $0 != " "
+                } ?? false
+            } catch {
+                restorationError = error
+            }
         }
-        if let packageListIndexTokenAfterLastUpdate {
+        if let packageListIndexTokenAfterLastUpdate, !preservePostFetchCheckoutState {
             do {
                 let currentPackageListIndexToken = try fileChangeToken(
                     at: packageListIndexURL,

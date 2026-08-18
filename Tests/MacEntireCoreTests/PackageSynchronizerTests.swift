@@ -34,6 +34,7 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
         XCTAssertEqual(git.commands, [
             ["-C", temporaryRoot.path, "rev-parse", "--show-toplevel"],
+            ["-C", temporaryRoot.path, "branch", "--show-current"],
             ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
             ["-C", temporaryRoot.path, "rev-parse", "--git-path", "index"],
             ["-C", temporaryRoot.path, "ls-files", "--stage", "--", "Packages/packages.txt"],
@@ -43,7 +44,8 @@ final class PackageSynchronizerTests: XCTestCase {
                 "restore", "--source=HEAD", "--staged", "--worktree", "--", "Packages/packages.txt"
             ],
             ["-C", temporaryRoot.path, "fetch"],
-            ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
+            ["-C", temporaryRoot.path, "branch", "--show-current"],
+            ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "main@{upstream}"],
             ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
             [
                 "--no-optional-locks", "-C", temporaryRoot.path,
@@ -68,6 +70,33 @@ final class PackageSynchronizerTests: XCTestCase {
         try synchronizer.synchronizeMacEntire()
 
         XCTAssertEqual(try String(contentsOf: packageList), "newer user edit\n")
+    }
+
+    func testMacEntireUpdatePreservesNewBranchManifestWhenBranchChangesDuringFetch() throws {
+        let packageList = try writePackageList("original branch customization\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            currentBranchOutput: "main",
+            currentBranchOutputAfterFetch: "develop",
+            packageListEditDuringFetch: "develop branch package list\n"
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronizeMacEntire()
+        ) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .branchMismatch(repository: "MacEntire", expected: "main", actual: "develop")
+            )
+        }
+
+        XCTAssertEqual(try String(contentsOf: packageList), "develop branch package list\n")
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
     }
 
     func testMacEntireUpdateRestoresManifestWhenEditDetectionFails() throws {
@@ -998,12 +1027,16 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let headEntryOutput: String
     private let originalRevision: String
     private let updatedRevision: String
+    private let currentBranchOutput: String
+    private let currentBranchOutputAfterFetch: String?
+    private let packageListEditDuringFetch: String?
     private let packageListEditDuringUpdate: String?
     private let packageListLinkDestinationDuringUpdate: String?
     private let indexTouchedDuringUpdate: Bool
     private let statusError: PackageSyncError?
     private let statusOutput: String?
     private var didMerge = false
+    private var didFetch = false
 
     init(
         rootDirectory: URL,
@@ -1014,6 +1047,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         headEntryOutput: String? = nil,
         originalRevision: String = "old-revision",
         updatedRevision: String = "new-revision",
+        currentBranchOutput: String = "main",
+        currentBranchOutputAfterFetch: String? = nil,
+        packageListEditDuringFetch: String? = nil,
         packageListEditDuringUpdate: String? = nil,
         packageListLinkDestinationDuringUpdate: String? = nil,
         indexTouchedDuringUpdate: Bool = false,
@@ -1026,6 +1062,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.updateError = updateError
         self.originalRevision = originalRevision
         self.updatedRevision = updatedRevision
+        self.currentBranchOutput = currentBranchOutput
+        self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
+        self.packageListEditDuringFetch = packageListEditDuringFetch
         self.packageListEditDuringUpdate = packageListEditDuringUpdate
         self.packageListLinkDestinationDuringUpdate = packageListLinkDestinationDuringUpdate
         self.indexTouchedDuringUpdate = indexTouchedDuringUpdate
@@ -1057,6 +1096,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         if arguments.contains("rev-parse") {
             return rootDirectory.path
         }
+        if arguments.contains("branch") {
+            return didFetch ? currentBranchOutputAfterFetch ?? currentBranchOutput : currentBranchOutput
+        }
         if arguments.contains("ls-files") {
             return indexEntryOutput
         }
@@ -1070,9 +1112,19 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
                 encoding: .utf8
             )
         }
-        if arguments.contains("fetch"), indexTouchedDuringUpdate {
-            let indexURL = rootDirectory.appendingPathComponent(".git/index")
-            try Data("test index".utf8).write(to: indexURL, options: .atomic)
+        if arguments.contains("fetch") {
+            didFetch = true
+            if indexTouchedDuringUpdate {
+                let indexURL = rootDirectory.appendingPathComponent(".git/index")
+                try Data("test index".utf8).write(to: indexURL, options: .atomic)
+            }
+            if let packageListEditDuringFetch {
+                try packageListEditDuringFetch.write(
+                    to: packageListURL,
+                    atomically: true,
+                    encoding: .utf8
+                )
+            }
         }
         if arguments.contains("merge") {
             try updatedPackageList.write(to: packageListURL, atomically: true, encoding: .utf8)
