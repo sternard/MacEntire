@@ -108,32 +108,27 @@ public struct ProcessGitRunner: GitRunning, Sendable {
             try? outputPipe.fileHandleForWriting.close()
         }
 
-        let process = Process()
-        let termination = DispatchSemaphore(value: 0)
-        process.executableURL = executableURL
-        process.arguments = arguments
-        process.standardOutput = outputPipe
-        process.standardError = outputPipe
-        process.terminationHandler = { _ in
-            termination.signal()
-        }
-
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
-        process.environment = environment
-
+        let processIdentifier: pid_t
         do {
-            try process.run()
+            processIdentifier = try spawnProcessGroup(
+                executableURL: executableURL,
+                arguments: arguments,
+                environment: environment,
+                outputPipe: outputPipe
+            )
         } catch {
             throw PackageSyncError.commandFailed(command: description, output: error.localizedDescription)
         }
         try? outputPipe.fileHandleForWriting.close()
 
-        guard termination.wait(timeout: .now() + max(timeout, 0)) == .success else {
-            process.terminate()
-            if termination.wait(timeout: .now() + 1) == .timedOut {
-                _ = Darwin.kill(process.processIdentifier, SIGKILL)
-                _ = termination.wait(timeout: .now() + 1)
+        guard let waitStatus = waitForProcess(processIdentifier, timeout: max(timeout, 0)) else {
+            _ = Darwin.kill(-processIdentifier, SIGTERM)
+            let terminatedStatus = waitForProcess(processIdentifier, timeout: 1)
+            _ = Darwin.kill(-processIdentifier, SIGKILL)
+            if terminatedStatus == nil {
+                _ = waitForProcess(processIdentifier, timeout: 1)
             }
             throw PackageSyncError.commandTimedOut(command: description)
         }
@@ -141,12 +136,129 @@ public struct ProcessGitRunner: GitRunning, Sendable {
         _ = readerFinished.wait(timeout: .now() + 1)
         let capturedOutput = output.string
 
-        guard process.terminationStatus == 0 else {
+        guard processExitCode(waitStatus) == 0 else {
             throw PackageSyncError.commandFailed(command: description, output: capturedOutput)
         }
 
         return capturedOutput
     }
+}
+
+private func spawnProcessGroup(
+    executableURL: URL,
+    arguments: [String],
+    environment: [String: String],
+    outputPipe: Pipe
+) throws -> pid_t {
+    var fileActions: posix_spawn_file_actions_t? = nil
+    var attributes: posix_spawnattr_t? = nil
+    let fileActionsResult = posix_spawn_file_actions_init(&fileActions)
+    guard fileActionsResult == 0 else {
+        throw posixError(fileActionsResult)
+    }
+    defer { posix_spawn_file_actions_destroy(&fileActions) }
+
+    let outputDescriptor = outputPipe.fileHandleForWriting.fileDescriptor
+    let readDescriptor = outputPipe.fileHandleForReading.fileDescriptor
+    for result in [
+        posix_spawn_file_actions_adddup2(&fileActions, outputDescriptor, STDOUT_FILENO),
+        posix_spawn_file_actions_adddup2(&fileActions, outputDescriptor, STDERR_FILENO),
+        posix_spawn_file_actions_addclose(&fileActions, readDescriptor),
+        posix_spawn_file_actions_addclose(&fileActions, outputDescriptor)
+    ] {
+        guard result == 0 else {
+            throw posixError(result)
+        }
+    }
+
+    let attributesResult = posix_spawnattr_init(&attributes)
+    guard attributesResult == 0 else {
+        throw posixError(attributesResult)
+    }
+    defer { posix_spawnattr_destroy(&attributes) }
+
+    let flagsResult = posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETPGROUP))
+    guard flagsResult == 0 else {
+        throw posixError(flagsResult)
+    }
+    let processGroupResult = posix_spawnattr_setpgroup(&attributes, 0)
+    guard processGroupResult == 0 else {
+        throw posixError(processGroupResult)
+    }
+
+    let argumentStrings = [executableURL.path] + arguments
+    let environmentStrings = environment
+        .map { "\($0.key)=\($0.value)" }
+        .sorted()
+    var processIdentifier: pid_t = 0
+    let spawnResult = withMutableCStringArray(argumentStrings) { argumentPointers in
+        withMutableCStringArray(environmentStrings) { environmentPointers in
+            executableURL.path.withCString { executablePath in
+                posix_spawn(
+                    &processIdentifier,
+                    executablePath,
+                    &fileActions,
+                    &attributes,
+                    argumentPointers,
+                    environmentPointers
+                )
+            }
+        }
+    }
+    guard spawnResult == 0 else {
+        throw posixError(spawnResult)
+    }
+    return processIdentifier
+}
+
+private func withMutableCStringArray<Result>(
+    _ strings: [String],
+    body: (UnsafeMutablePointer<UnsafeMutablePointer<CChar>?>) -> Result
+) -> Result {
+    var pointers = strings.map { strdup($0) }
+    pointers.append(nil)
+    defer {
+        for pointer in pointers where pointer != nil {
+            free(pointer)
+        }
+    }
+    return pointers.withUnsafeMutableBufferPointer { buffer in
+        body(buffer.baseAddress!)
+    }
+}
+
+private func waitForProcess(_ processIdentifier: pid_t, timeout: TimeInterval) -> Int32? {
+    let deadline = Date().addingTimeInterval(timeout)
+    repeat {
+        var status: Int32 = 0
+        let result = Darwin.waitpid(processIdentifier, &status, WNOHANG)
+        if result == processIdentifier {
+            return status
+        }
+        if result == -1, errno != EINTR {
+            return nil
+        }
+        if Date() >= deadline {
+            return nil
+        }
+        usleep(10_000)
+    } while true
+}
+
+private func processExitCode(_ waitStatus: Int32) -> Int32 {
+    let signal = waitStatus & 0x7f
+    if signal == 0 {
+        return (waitStatus >> 8) & 0xff
+    }
+    return 128 + signal
+}
+
+private func posixError(_ code: Int32) -> NSError {
+    NSError(
+        domain: NSPOSIXErrorDomain,
+        code: Int(code),
+        userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(code))]
+    )
 }
 
 final class BoundedProcessOutput: @unchecked Sendable {

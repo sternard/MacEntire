@@ -18,6 +18,42 @@ final class ProcessGitRunnerTests: XCTestCase {
         XCTAssertLessThan(Date().timeIntervalSince(start), 2)
     }
 
+    func testTerminatesDescendantProcessAfterTimeout() throws {
+        let processIdentifierFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireChildPID-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: processIdentifierFile) }
+        let runner = ProcessGitRunner(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            timeout: 0.1
+        )
+
+        XCTAssertThrowsError(try runner.run(
+            [
+                "-c",
+                "/bin/sleep 30 & echo $! > \"$1\"; wait",
+                "MacEntire timeout test",
+                processIdentifierFile.path
+            ],
+            description: "Run process-tree test command"
+        )) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .commandTimedOut(command: "Run process-tree test command")
+            )
+        }
+
+        let processIdentifier = try XCTUnwrap(
+            pid_t(String(contentsOf: processIdentifierFile, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines))
+        )
+        let deadline = Date().addingTimeInterval(1)
+        while Darwin.kill(processIdentifier, 0) == 0, Date() < deadline {
+            usleep(10_000)
+        }
+        XCTAssertEqual(Darwin.kill(processIdentifier, 0), -1)
+        XCTAssertEqual(errno, ESRCH)
+    }
+
     func testCapturesOnlyBoundedTailWhileCommandRuns() {
         let runner = ProcessGitRunner(
             executableURL: URL(fileURLWithPath: "/bin/sh"),
