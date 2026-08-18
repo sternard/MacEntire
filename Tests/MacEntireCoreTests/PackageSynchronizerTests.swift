@@ -45,6 +45,7 @@ final class PackageSynchronizerTests: XCTestCase {
             ],
             ["-C", temporaryRoot.path, "fetch"],
             ["-C", temporaryRoot.path, "branch", "--show-current"],
+            ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
             ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "main@{upstream}"],
             ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
             [
@@ -122,6 +123,39 @@ final class PackageSynchronizerTests: XCTestCase {
                 && arguments.contains(stagedObjectID)
                 && arguments.contains { $0.hasPrefix("refs/macentire-recovery/") }
         })
+    }
+
+    func testMacEntireUpdatePreservesNewManifestWhenHeadChangesDuringFetch() throws {
+        let packageList = try writePackageList("original customization\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            revisionAfterFetch: "user-commit",
+            packageListEditDuringFetch: "new committed package list\n"
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronizeMacEntire()
+        ) { error in
+            guard case .packageListRecoveryRequired(let reason, let location) = error as? PackageSyncError else {
+                return XCTFail("Expected a package-list recovery error")
+            }
+            XCTAssertEqual(reason, PackageSyncError.localChanges("MacEntire").localizedDescription)
+            XCTAssertEqual(
+                try? Data(
+                    contentsOf: URL(fileURLWithPath: location, isDirectory: true)
+                        .appendingPathComponent("packages.txt.worktree")
+                ),
+                Data("original customization\n".utf8)
+            )
+        }
+
+        XCTAssertEqual(try String(contentsOf: packageList), "new committed package list\n")
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
     }
 
     func testMacEntireUpdateRestoresManifestWhenEditDetectionFails() throws {
@@ -1053,6 +1087,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let indexEntryOutput: String
     private let headEntryOutput: String
     private let originalRevision: String
+    private let revisionAfterFetch: String?
     private let updatedRevision: String
     private let currentBranchOutput: String
     private let currentBranchOutputAfterFetch: String?
@@ -1073,6 +1108,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         indexEntryOutput: String? = nil,
         headEntryOutput: String? = nil,
         originalRevision: String = "old-revision",
+        revisionAfterFetch: String? = nil,
         updatedRevision: String = "new-revision",
         currentBranchOutput: String = "main",
         currentBranchOutputAfterFetch: String? = nil,
@@ -1088,6 +1124,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.updatedPackageList = updatedPackageList
         self.updateError = updateError
         self.originalRevision = originalRevision
+        self.revisionAfterFetch = revisionAfterFetch
         self.updatedRevision = updatedRevision
         self.currentBranchOutput = currentBranchOutput
         self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
@@ -1107,7 +1144,10 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     func run(_ arguments: [String], description: String) throws -> String {
         commands.append(arguments)
         if arguments.suffix(2) == ["rev-parse", "HEAD"] {
-            return didMerge ? updatedRevision : originalRevision
+            if didMerge {
+                return updatedRevision
+            }
+            return didFetch ? revisionAfterFetch ?? originalRevision : originalRevision
         }
         if arguments.suffix(3) == ["rev-parse", "--git-path", "index"] {
             let indexURL = rootDirectory.appendingPathComponent(".git/index")

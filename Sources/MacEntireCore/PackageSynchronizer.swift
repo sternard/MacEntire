@@ -575,6 +575,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     actual: branchAfterFetch
                 )
             }
+            let revisionAfterFetch = try gitRunner.run(
+                ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+                description: "Revalidate MacEntire revision"
+            )
+            guard revisionAfterFetch == originalRevision else {
+                throw PackageSyncError.localChanges("MacEntire")
+            }
             preservePostFetchCheckoutState = false
             if let packageListIndexTokenAfterLastUpdate {
                 packageListIndexWasTouchedDuringUpdate = try fileChangeToken(
