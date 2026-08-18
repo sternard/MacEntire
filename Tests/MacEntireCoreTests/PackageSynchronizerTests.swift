@@ -91,6 +91,29 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
     }
 
+    func testSynchronizeAllPreservesReinstallStateWhenManifestRestorationFails() throws {
+        let packageList = try writePackageList("")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "",
+            statusError: .commandFailed(command: "Inspect package list", output: "status failed")
+        )
+
+        let summary = try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeAll()
+
+        XCTAssertTrue(summary.macEntireRequiresReinstallation)
+        XCTAssertEqual(
+            summary.statusMessage,
+            "MacEntire updated — reinstall required; "
+                + "Could not restore Packages/packages.txt after updating MacEntire: "
+                + "Inspect package list failed: status failed"
+        )
+    }
+
     func testMacEntireUpdatePreservesIndexEditMadeDuringUpdate() throws {
         let packageList = try writePackageList("custom package list\n")
         let stagedObjectID = String(repeating: "1", count: 40)

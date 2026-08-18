@@ -35,6 +35,19 @@ public struct SynchronizationSummary: Equatable, Sendable {
 
     public var statusMessage: String {
         let failures = packageResults.filter { !$0.succeeded }
+        if let macEntireErrorMessage, macEntireRequiresReinstallation {
+            var statusParts = [
+                "MacEntire updated — reinstall required",
+                macEntireErrorMessage
+            ]
+            if let packageListErrorMessage {
+                statusParts.append("Package list: \(packageListErrorMessage)")
+            }
+            if !failures.isEmpty {
+                statusParts.append("\(failures.count) package updates could not be synced")
+            }
+            return statusParts.joined(separator: "; ")
+        }
         if let macEntireErrorMessage {
             if let packageListErrorMessage {
                 return "MacEntire: \(macEntireErrorMessage); Package list: \(packageListErrorMessage)"
@@ -78,7 +91,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case missingLauncher(String)
     case nonExecutableLauncher(String)
     case macEntireIsNotRepository
-    case packageListRestorationFailed(String)
+    case packageListRestorationFailed(String, requiresReinstallation: Bool)
     case commandFailed(command: String, output: String)
     case commandTimedOut(command: String)
 
@@ -104,13 +117,22 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) scripts/run-app.sh is not executable."
         case .macEntireIsNotRepository:
             return "The configured MacEntire root is not the root of a Git repository."
-        case .packageListRestorationFailed(let detail):
+        case .packageListRestorationFailed(let detail, _):
             return "Could not restore Packages/packages.txt after updating MacEntire: \(detail)"
         case .commandFailed(let command, let output):
             let detail = output.isEmpty ? "Git returned an error." : output
             return "\(command) failed: \(detail)"
         case .commandTimedOut(let command):
             return "\(command) timed out; check the network and try again."
+        }
+    }
+
+    var requiresReinstallation: Bool {
+        switch self {
+        case .packageListRestorationFailed(_, let requiresReinstallation):
+            return requiresReinstallation
+        default:
+            return false
         }
     }
 }
@@ -404,7 +426,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             macEntireRequiresReinstallation = try synchronizeMacEntire()
             macEntireErrorMessage = nil
         } catch {
-            macEntireRequiresReinstallation = false
+            macEntireRequiresReinstallation = (error as? PackageSyncError)?.requiresReinstallation ?? false
             macEntireErrorMessage = error.localizedDescription
         }
 
@@ -611,7 +633,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
         }
 
         if let restorationError {
-            throw PackageSyncError.packageListRestorationFailed(restorationError.localizedDescription)
+            throw PackageSyncError.packageListRestorationFailed(
+                restorationError.localizedDescription,
+                requiresReinstallation: updatedRevision != originalRevision
+            )
         }
 
         if let updateError {
@@ -786,7 +811,8 @@ private func packageListIndexEntry(from output: String) throws -> GitFileEntry? 
     }
     guard lines.count == 1 else {
         throw PackageSyncError.packageListRestorationFailed(
-            "The package list has unresolved index entries."
+            "The package list has unresolved index entries.",
+            requiresReinstallation: false
         )
     }
 
@@ -795,7 +821,8 @@ private func packageListIndexEntry(from output: String) throws -> GitFileEntry? 
         .split(whereSeparator: \.isWhitespace)
     guard metadata.count == 3, metadata[2] == "0" else {
         throw PackageSyncError.packageListRestorationFailed(
-            "The package list index entry could not be read."
+            "The package list index entry could not be read.",
+            requiresReinstallation: false
         )
     }
     return GitFileEntry(mode: String(metadata[0]), objectID: String(metadata[1]))
