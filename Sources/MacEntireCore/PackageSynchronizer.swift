@@ -540,11 +540,11 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
     @discardableResult
     func synchronizeMacEntire() throws -> Bool {
-        guard !isSymbolicLink(at: workspace.packagesDirectory) else {
-            throw PackageSyncError.symbolicLinkPackagesDirectory
-        }
-
         let rootDirectory = workspace.rootDirectory
+        let packagesDirectory = try openManagedPackagesDirectory(rootDirectory: rootDirectory)
+        let packageListURL = packagesDirectory.url.appendingPathComponent(
+            PackageListParser.packageListFilename
+        )
         let resolvedTopLevel = try gitRunner.run(
             ["-C", rootDirectory.path, "rev-parse", "--show-toplevel"],
             description: "Validate MacEntire checkout"
@@ -575,18 +575,18 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
         let fileManager = FileManager.default
         let preservedPackageListLinkDestination = try? fileManager.destinationOfSymbolicLink(
-            atPath: workspace.packageListURL.path
+            atPath: packageListURL.path
         )
         let preservedPackageListPermissions: NSNumber?
         if preservedPackageListLinkDestination == nil {
-            let attributes = try fileManager.attributesOfItem(atPath: workspace.packageListURL.path)
+            let attributes = try fileManager.attributesOfItem(atPath: packageListURL.path)
             preservedPackageListPermissions = attributes[.posixPermissions] as? NSNumber
         } else {
             preservedPackageListPermissions = nil
         }
         let preservedPackageList: Data
         do {
-            preservedPackageList = try Data(contentsOf: workspace.packageListURL)
+            preservedPackageList = try Data(contentsOf: packageListURL)
         } catch {
             throw PackageListError.unreadableFile(workspace.packageListURL.path)
         }
@@ -681,67 +681,98 @@ public final class PackageSynchronizer: @unchecked Sendable {
         var packageListWasEditedDuringUpdate = preservePostFetchCheckoutState
         var packageListWasStagedDuringUpdate = preservePostFetchCheckoutState
         var packageListIndexWasTouchedDuringUpdate = preservePostFetchCheckoutState
+        var packagesDirectoryWasReplaced = false
         if !preservePostFetchCheckoutState {
-            do {
-                let packageListStatus = try gitRunner.run(
-                    [
-                        "--no-optional-locks", "-C", rootDirectory.path,
-                        "status", "--porcelain", "--", packageListPath
-                    ],
-                    description: "Check for concurrent MacEntire package list edits"
-                )
-                packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
-                packageListWasStagedDuringUpdate = packageListStatus.first.map {
-                    $0 != " "
-                } ?? false
-                let currentIndexEntry = try packageListIndexEntry(
-                    from: gitRunner.run(
-                        ["-C", rootDirectory.path, "ls-files", "--stage", "--", packageListPath],
-                        description: "Check MacEntire package list index"
+            if !managedPackagesDirectoryIsCurrent(
+                packagesDirectory,
+                at: workspace.packagesDirectory
+            ) {
+                packagesDirectoryWasReplaced = true
+                restorationError = PackageSyncError.symbolicLinkPackagesDirectory
+            } else {
+                do {
+                    let packageListStatus = try gitRunner.run(
+                        [
+                            "--no-optional-locks", "-C", rootDirectory.path,
+                            "status", "--porcelain", "--", packageListPath
+                        ],
+                        description: "Check for concurrent MacEntire package list edits"
                     )
-                )
-                let updatedHeadIndexEntry = packageListTreeEntry(
-                    from: try gitRunner.run(
-                        ["-C", rootDirectory.path, "ls-tree", "HEAD", "--", packageListPath],
-                        description: "Check updated MacEntire package list"
+                    packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
+                    packageListWasStagedDuringUpdate = packageListStatus.first.map {
+                        $0 != " "
+                    } ?? false
+                    let currentIndexEntry = try packageListIndexEntry(
+                        from: gitRunner.run(
+                            ["-C", rootDirectory.path, "ls-files", "--stage", "--", packageListPath],
+                            description: "Check MacEntire package list index"
+                        )
                     )
-                )
-                packageListIndexWasTouchedDuringUpdate = currentIndexEntry != updatedHeadIndexEntry
-            } catch {
-                restorationError = error
+                    let updatedHeadIndexEntry = packageListTreeEntry(
+                        from: try gitRunner.run(
+                            ["-C", rootDirectory.path, "ls-tree", "HEAD", "--", packageListPath],
+                            description: "Check updated MacEntire package list"
+                        )
+                    )
+                    packageListIndexWasTouchedDuringUpdate = currentIndexEntry != updatedHeadIndexEntry
+                } catch {
+                    restorationError = error
+                }
             }
         }
 
-        do {
-            try fileManager.createDirectory(
-                at: workspace.packagesDirectory,
-                withIntermediateDirectories: true
-            )
-            if let preservedPackageListLinkDestination, !packageListWasEditedDuringUpdate {
-                if
-                    fileManager.fileExists(atPath: workspace.packageListURL.path)
-                        || isSymbolicLink(at: workspace.packageListURL, fileManager: fileManager)
-                {
-                    try fileManager.removeItem(at: workspace.packageListURL)
+        if !packagesDirectoryWasReplaced {
+            do {
+                guard managedPackagesDirectoryIsCurrent(
+                    packagesDirectory,
+                    at: workspace.packagesDirectory
+                ) else {
+                    throw PackageSyncError.symbolicLinkPackagesDirectory
                 }
-                try fileManager.createSymbolicLink(
-                    atPath: workspace.packageListURL.path,
-                    withDestinationPath: preservedPackageListLinkDestination
-                )
-            } else if !packageListWasEditedDuringUpdate {
-                try preservedPackageList.write(to: workspace.packageListURL, options: .atomic)
-                if let preservedPackageListPermissions {
-                    try fileManager.setAttributes(
-                        [.posixPermissions: preservedPackageListPermissions],
-                        ofItemAtPath: workspace.packageListURL.path
+                if let preservedPackageListLinkDestination, !packageListWasEditedDuringUpdate {
+                    if
+                        fileManager.fileExists(atPath: packageListURL.path)
+                            || isSymbolicLink(at: packageListURL, fileManager: fileManager)
+                    {
+                        try fileManager.removeItem(at: packageListURL)
+                    }
+                    try fileManager.createSymbolicLink(
+                        atPath: packageListURL.path,
+                        withDestinationPath: preservedPackageListLinkDestination
                     )
+                } else if !packageListWasEditedDuringUpdate {
+                    try preservedPackageList.write(to: packageListURL, options: .atomic)
+                    if let preservedPackageListPermissions {
+                        try fileManager.setAttributes(
+                            [.posixPermissions: preservedPackageListPermissions],
+                            ofItemAtPath: packageListURL.path
+                        )
+                    }
                 }
+                guard managedPackagesDirectoryIsCurrent(
+                    packagesDirectory,
+                    at: workspace.packagesDirectory
+                ) else {
+                    throw PackageSyncError.symbolicLinkPackagesDirectory
+                }
+            } catch {
+                if error as? PackageSyncError == .symbolicLinkPackagesDirectory {
+                    packagesDirectoryWasReplaced = true
+                }
+                restorationError = restorationError ?? error
             }
-        } catch {
-            restorationError = error
+        }
+
+        if !managedPackagesDirectoryIsCurrent(
+            packagesDirectory,
+            at: workspace.packagesDirectory
+        ) {
+            packagesDirectoryWasReplaced = true
+            restorationError = restorationError ?? PackageSyncError.symbolicLinkPackagesDirectory
         }
 
         if
+            !packagesDirectoryWasReplaced,
             packageListHadStagedChanges,
             !packageListWasStagedDuringUpdate,
             !packageListIndexWasTouchedDuringUpdate
@@ -1139,6 +1170,13 @@ private func openManagedPackagesDirectory(rootDirectory: URL) throws -> StableDi
         throw posixError(errno)
     }
     return try StableDirectoryHandle(descriptor: descriptor)
+}
+
+private func managedPackagesDirectoryIsCurrent(
+    _ packagesDirectory: StableDirectoryHandle,
+    at visibleURL: URL
+) -> Bool {
+    !isSymbolicLink(at: visibleURL) && packagesDirectory.matches(visibleURL)
 }
 
 private func openManagedCheckout(

@@ -181,6 +181,55 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
     }
 
+    func testMacEntireUpdateRejectsReplacedPackagesDirectoryBeforeManifestRestore() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let externalPackagesDirectory = temporaryRoot.appendingPathComponent(
+            "External-Packages",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: externalPackagesDirectory,
+            withIntermediateDirectories: true
+        )
+        let externalPackageList = externalPackagesDirectory.appendingPathComponent("packages.txt")
+        try "external package list\n".write(
+            to: externalPackageList,
+            atomically: true,
+            encoding: .utf8
+        )
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            packagesDirectoryReplacementDuringStatus: externalPackagesDirectory
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronizeMacEntire()
+        ) { error in
+            guard case .packageListRestorationFailed(let detail, let requiresReinstallation) =
+                error as? PackageSyncError
+            else {
+                return XCTFail("Expected a package-list restoration failure")
+            }
+            XCTAssertTrue(detail.contains("The Packages directory is a symbolic link."))
+            XCTAssertTrue(requiresReinstallation)
+        }
+
+        XCTAssertEqual(try String(contentsOf: externalPackageList), "external package list\n")
+        XCTAssertEqual(
+            try String(
+                contentsOf: temporaryRoot.appendingPathComponent(
+                    "Original-Packages/packages.txt"
+                )
+            ),
+            "upstream package list\n"
+        )
+    }
+
     func testSynchronizeAllPreservesReinstallStateWhenManifestRestorationFails() throws {
         let packageList = try writePackageList("")
         let git = MacEntireUpdateGitRunner(
@@ -1306,6 +1355,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let packageListEditDuringUpdate: String?
     private let packageListLinkDestinationDuringUpdate: String?
     private let packageListModeDuringRestore: Int?
+    private let packagesDirectoryReplacementDuringStatus: URL?
     private let indexTouchedDuringUpdate: Bool
     private let statusError: PackageSyncError?
     private let statusOutput: String?
@@ -1329,6 +1379,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         packageListEditDuringUpdate: String? = nil,
         packageListLinkDestinationDuringUpdate: String? = nil,
         packageListModeDuringRestore: Int? = nil,
+        packagesDirectoryReplacementDuringStatus: URL? = nil,
         indexTouchedDuringUpdate: Bool = false,
         statusError: PackageSyncError? = nil,
         statusOutput: String? = nil
@@ -1346,6 +1397,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.packageListEditDuringUpdate = packageListEditDuringUpdate
         self.packageListLinkDestinationDuringUpdate = packageListLinkDestinationDuringUpdate
         self.packageListModeDuringRestore = packageListModeDuringRestore
+        self.packagesDirectoryReplacementDuringStatus = packagesDirectoryReplacementDuringStatus
         self.indexTouchedDuringUpdate = indexTouchedDuringUpdate
         self.statusError = statusError
         self.statusOutput = statusOutput
@@ -1442,6 +1494,17 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
             }
         }
         if arguments.contains("status") {
+            if let packagesDirectoryReplacementDuringStatus {
+                let packagesDirectory = packageListURL.deletingLastPathComponent()
+                try FileManager.default.moveItem(
+                    at: packagesDirectory,
+                    to: rootDirectory.appendingPathComponent("Original-Packages", isDirectory: true)
+                )
+                try FileManager.default.createSymbolicLink(
+                    at: packagesDirectory,
+                    withDestinationURL: packagesDirectoryReplacementDuringStatus
+                )
+            }
             if let statusError {
                 throw statusError
             }
