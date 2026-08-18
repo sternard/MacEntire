@@ -8,7 +8,7 @@ public struct PackageDefinition: Identifiable, Hashable, Sendable {
     public let directoryURL: URL
 
     public var id: String {
-        repositoryURL.absoluteString
+        repositoryURL.absoluteString.lowercased()
     }
 
     public var launcherURL: URL {

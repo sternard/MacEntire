@@ -25,6 +25,23 @@ final class PackageListTests: XCTestCase {
         XCTAssertEqual(packages[1].repositoryURL.absoluteString, "https://github.com/sternard/HEIC-to-JPEG")
     }
 
+    func testCaseOnlyRepositoryChangesPreserveActiveLaunchIdentifier() throws {
+        let original = try XCTUnwrap(PackageListParser().parse(
+            "https://github.com/sternard/Storage-Assistant",
+            packagesDirectory: packagesDirectory
+        ).first)
+        let refreshed = try XCTUnwrap(PackageListParser().parse(
+            "https://github.com/STERNARD/storage-assistant",
+            packagesDirectory: packagesDirectory
+        ).first)
+        var operations = PackageOperationState()
+
+        XCTAssertEqual(original.id, refreshed.id)
+        XCTAssertTrue(operations.beginLaunch(packageIdentifier: original.id))
+        XCTAssertFalse(operations.beginLaunch(packageIdentifier: refreshed.id))
+        XCTAssertTrue(operations.isLaunching(packageIdentifier: refreshed.id))
+    }
+
     func testRejectsNonGitHubURLs() {
         XCTAssertThrowsError(
             try PackageListParser().parse(
