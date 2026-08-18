@@ -18,31 +18,44 @@ public struct PackageSyncResult: Equatable, Sendable {
 public struct SynchronizationSummary: Equatable, Sendable {
     public let macEntireErrorMessage: String?
     public let macEntireRequiresReinstallation: Bool
+    public let packageListErrorMessage: String?
     public let packageResults: [PackageSyncResult]
 
     public init(
         macEntireErrorMessage: String? = nil,
         macEntireRequiresReinstallation: Bool = false,
+        packageListErrorMessage: String? = nil,
         packageResults: [PackageSyncResult]
     ) {
         self.macEntireErrorMessage = macEntireErrorMessage
         self.macEntireRequiresReinstallation = macEntireRequiresReinstallation
+        self.packageListErrorMessage = packageListErrorMessage
         self.packageResults = packageResults
     }
 
     public var statusMessage: String {
         let failures = packageResults.filter { !$0.succeeded }
         if let macEntireErrorMessage {
+            if let packageListErrorMessage {
+                return "MacEntire: \(macEntireErrorMessage); Package list: \(packageListErrorMessage)"
+            }
             if failures.isEmpty {
                 return "MacEntire: \(macEntireErrorMessage)"
             }
             return "MacEntire and \(failures.count) package updates could not be synced"
         }
         if macEntireRequiresReinstallation {
+            if let packageListErrorMessage {
+                return "MacEntire updated — quit and run scripts/install-app.sh to install it; "
+                    + "Package list: \(packageListErrorMessage)"
+            }
             if failures.isEmpty {
                 return "MacEntire updated — quit and run scripts/install-app.sh to install it"
             }
             return "MacEntire updated — reinstall required; \(failures.count) package updates could not be synced"
+        }
+        if let packageListErrorMessage {
+            return "Package list: \(packageListErrorMessage)"
         }
         if failures.isEmpty {
             return "MacEntire and all packages are up to date"
@@ -389,7 +402,17 @@ public final class PackageSynchronizer: @unchecked Sendable {
             macEntireErrorMessage = error.localizedDescription
         }
 
-        let packageResults = try workspace.definitions().map { package in
+        let definitions: [PackageDefinition]
+        let packageListErrorMessage: String?
+        do {
+            definitions = try workspace.definitions()
+            packageListErrorMessage = nil
+        } catch {
+            definitions = []
+            packageListErrorMessage = error.localizedDescription
+        }
+
+        let packageResults = definitions.map { package in
             do {
                 try synchronize(package)
                 return PackageSyncResult(package: package)
@@ -401,6 +424,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         return SynchronizationSummary(
             macEntireErrorMessage: macEntireErrorMessage,
             macEntireRequiresReinstallation: macEntireRequiresReinstallation,
+            packageListErrorMessage: packageListErrorMessage,
             packageResults: packageResults
         )
     }

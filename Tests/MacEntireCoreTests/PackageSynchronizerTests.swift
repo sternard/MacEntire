@@ -77,6 +77,33 @@ final class PackageSynchronizerTests: XCTestCase {
         )
     }
 
+    func testSynchronizeAllPreservesReinstallNoticeWhenPackageListIsInvalid() throws {
+        let packageList = try writePackageList("not a repository\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n"
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        let summary = try synchronizer.synchronizeAll()
+
+        XCTAssertTrue(summary.macEntireRequiresReinstallation)
+        XCTAssertEqual(
+            summary.packageListErrorMessage,
+            "Invalid package entry on line 1: not a repository"
+        )
+        XCTAssertEqual(
+            summary.statusMessage,
+            "MacEntire updated — quit and run scripts/install-app.sh to install it; "
+                + "Package list: Invalid package entry on line 1: not a repository"
+        )
+        XCTAssertTrue(summary.packageResults.isEmpty)
+    }
+
     func testMacEntireUpdateFastForwardsRealRepositoryAndPreservesPartiallyStagedPackageList() throws {
         let remote = temporaryRoot.appendingPathComponent("Remote.git", isDirectory: true)
         let source = temporaryRoot.appendingPathComponent("Source", isDirectory: true)
