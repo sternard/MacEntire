@@ -66,6 +66,23 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testIgnoreListAllowsSameNamedRepositoriesFromDifferentOwners() throws {
+        let workspace = PackageWorkspace(rootDirectory: temporaryRoot)
+        try """
+        https://github.com/bob/Shared-Tool
+        https://github.com/sternard/Other-Tool
+        """.write(to: workspace.packageListURL, atomically: true, encoding: .utf8)
+        try """
+        https://github.com/alice/Shared-Tool
+        https://github.com/bob/Shared-Tool
+        """.write(to: workspace.ignoreListURL, atomically: true, encoding: .utf8)
+
+        XCTAssertEqual(
+            try workspace.definitions().map(\.repositoryURL.absoluteString),
+            ["https://github.com/sternard/Other-Tool"]
+        )
+    }
+
     func testWrongConfiguredBranchIsUnavailable() throws {
         let workspace = PackageWorkspace(rootDirectory: temporaryRoot)
         try "https://github.com/sternard/Example-App -b develop\n".write(

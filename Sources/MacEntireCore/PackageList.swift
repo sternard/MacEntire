@@ -53,7 +53,11 @@ public struct PackageListParser: Sendable {
 
     public init() {}
 
-    public func parse(_ contents: String, packagesDirectory: URL) throws -> [PackageDefinition] {
+    public func parse(
+        _ contents: String,
+        packagesDirectory: URL,
+        enforceUniqueDirectoryNames: Bool = true
+    ) throws -> [PackageDefinition] {
         var packages: [PackageDefinition] = []
         var directoryNames = Set<String>()
 
@@ -77,7 +81,8 @@ public struct PackageListParser: Sendable {
                   directoryName != Self.ignoreListFilename else {
                 throw PackageListError.invalidEntry(line: lineNumber, value: line)
             }
-            guard directoryNames.insert(directoryName).inserted else {
+            guard !enforceUniqueDirectoryNames
+                    || directoryNames.insert(directoryName).inserted else {
                 throw PackageListError.duplicateDirectory(
                     line: lineNumber,
                     name: parsed.repositoryName

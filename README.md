@@ -55,6 +55,8 @@ Each active package must provide:
 scripts/run-app.sh
 ```
 
+The launcher must be Bash-compatible; MacEntire invokes it with `/bin/bash`.
+
 ## Run locally
 
 ```sh
