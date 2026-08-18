@@ -74,10 +74,13 @@ final class PackageSynchronizerTests: XCTestCase {
 
     func testMacEntireUpdatePreservesNewBranchManifestWhenBranchChangesDuringFetch() throws {
         let packageList = try writePackageList("original branch customization\n")
+        let stagedObjectID = String(repeating: "1", count: 40)
         let git = MacEntireUpdateGitRunner(
             rootDirectory: temporaryRoot,
             packageListURL: packageList,
             updatedPackageList: "upstream package list\n",
+            indexEntryOutput: "100644 \(stagedObjectID) 0\tPackages/packages.txt",
+            headEntryOutput: "100644 blob \(String(repeating: "0", count: 40))\tPackages/packages.txt",
             currentBranchOutput: "main",
             currentBranchOutputAfterFetch: "develop",
             packageListEditDuringFetch: "develop branch package list\n"
@@ -89,14 +92,36 @@ final class PackageSynchronizerTests: XCTestCase {
                 gitRunner: git
             ).synchronizeMacEntire()
         ) { error in
+            guard case .packageListRecoveryRequired(let reason, let location) = error as? PackageSyncError else {
+                return XCTFail("Expected a package-list recovery error")
+            }
             XCTAssertEqual(
-                error as? PackageSyncError,
-                .branchMismatch(repository: "MacEntire", expected: "main", actual: "develop")
+                reason,
+                PackageSyncError.branchMismatch(
+                    repository: "MacEntire",
+                    expected: "main",
+                    actual: "develop"
+                ).localizedDescription
             )
+            let recoveryDirectory = URL(fileURLWithPath: location, isDirectory: true)
+            XCTAssertEqual(
+                try? Data(contentsOf: recoveryDirectory.appendingPathComponent("packages.txt.worktree")),
+                Data("original branch customization\n".utf8)
+            )
+            let indexRecovery = try? String(
+                contentsOf: recoveryDirectory.appendingPathComponent("packages.txt.index"),
+                encoding: .utf8
+            )
+            XCTAssertTrue(indexRecovery?.contains(stagedObjectID) == true)
         }
 
         XCTAssertEqual(try String(contentsOf: packageList), "develop branch package list\n")
         XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+        XCTAssertTrue(git.commands.contains { arguments in
+            arguments.contains("update-ref")
+                && arguments.contains(stagedObjectID)
+                && arguments.contains { $0.hasPrefix("refs/macentire-recovery/") }
+        })
     }
 
     func testMacEntireUpdateRestoresManifestWhenEditDetectionFails() throws {
@@ -135,12 +160,14 @@ final class PackageSynchronizerTests: XCTestCase {
         ).synchronizeAll()
 
         XCTAssertTrue(summary.macEntireRequiresReinstallation)
-        XCTAssertEqual(
-            summary.statusMessage,
+        XCTAssertTrue(
+            summary.statusMessage.hasPrefix(
             "MacEntire updated — reinstall required; "
                 + "Could not restore Packages/packages.txt after updating MacEntire: "
                 + "Inspect package list failed: status failed"
+            )
         )
+        XCTAssertTrue(summary.statusMessage.contains("/.git/macentire-recovery/"))
     }
 
     func testMacEntireUpdatePreservesIndexEditMadeDuringUpdate() throws {

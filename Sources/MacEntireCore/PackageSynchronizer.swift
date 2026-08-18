@@ -91,6 +91,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case missingLauncher(String)
     case nonExecutableLauncher(String)
     case macEntireIsNotRepository
+    case packageListRecoveryRequired(reason: String, location: String)
     case packageListRestorationFailed(String, requiresReinstallation: Bool)
     case commandFailed(command: String, output: String)
     case commandTimedOut(command: String)
@@ -117,6 +118,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) scripts/run-app.sh is not executable."
         case .macEntireIsNotRepository:
             return "The configured MacEntire root is not the root of a Git repository."
+        case .packageListRecoveryRequired(let reason, let location):
+            return "\(reason) Original package-list changes were saved to \(location)."
         case .packageListRestorationFailed(let detail, _):
             return "Could not restore Packages/packages.txt after updating MacEntire: \(detail)"
         case .commandFailed(let command, let output):
@@ -517,6 +520,25 @@ public final class PackageSynchronizer: @unchecked Sendable {
             )
         )
         let packageListHadStagedChanges = preservedIndexEntry != headIndexEntry
+        let packageListRecovery: PackageListRecoverySnapshot
+        do {
+            packageListRecovery = try createPackageListRecovery(
+                rootDirectory: rootDirectory,
+                gitDirectory: packageListIndexURL.deletingLastPathComponent(),
+                originalBranch: originalBranch,
+                preservedPackageList: preservedPackageList,
+                symbolicLinkDestination: preservedPackageListLinkDestination,
+                indexWasCustomized: packageListHadStagedChanges,
+                preservedIndexEntry: preservedIndexEntry,
+                packageListPath: packageListPath,
+                fileManager: fileManager
+            )
+        } catch {
+            throw PackageSyncError.packageListRestorationFailed(
+                "Could not create a recovery copy before updating: \(error.localizedDescription)",
+                requiresReinstallation: false
+            )
+        }
         var packageListIndexTokenAfterLastUpdate: FileChangeToken?
         var packageListIndexWasTouchedDuringUpdate = false
         var preservePostFetchCheckoutState = false
@@ -661,18 +683,136 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
         }
 
+        if preservePostFetchCheckoutState, let updateError {
+            throw PackageSyncError.packageListRecoveryRequired(
+                reason: updateError.localizedDescription,
+                location: packageListRecovery.directoryURL.path
+            )
+        }
+
         if let restorationError {
             throw PackageSyncError.packageListRestorationFailed(
-                restorationError.localizedDescription,
+                "\(restorationError.localizedDescription) Original state was saved to "
+                    + "\(packageListRecovery.directoryURL.path).",
                 requiresReinstallation: updatedRevision != originalRevision
             )
         }
+
+        removePackageListRecovery(
+            packageListRecovery,
+            rootDirectory: rootDirectory,
+            fileManager: fileManager
+        )
 
         if let updateError {
             throw updateError
         }
 
         return updatedRevision != originalRevision
+    }
+
+    private func createPackageListRecovery(
+        rootDirectory: URL,
+        gitDirectory: URL,
+        originalBranch: String,
+        preservedPackageList: Data,
+        symbolicLinkDestination: String?,
+        indexWasCustomized: Bool,
+        preservedIndexEntry: GitFileEntry?,
+        packageListPath: String,
+        fileManager: FileManager
+    ) throws -> PackageListRecoverySnapshot {
+        let identifier = UUID().uuidString.lowercased()
+        let directoryURL = gitDirectory
+            .appendingPathComponent("macentire-recovery", isDirectory: true)
+            .appendingPathComponent(identifier, isDirectory: true)
+        try fileManager.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+
+        var indexReference: String?
+        do {
+            try preservedPackageList.write(
+                to: directoryURL.appendingPathComponent("packages.txt.worktree"),
+                options: .atomic
+            )
+            if let symbolicLinkDestination {
+                try Data(symbolicLinkDestination.utf8).write(
+                    to: directoryURL.appendingPathComponent("packages.txt.symlink-destination"),
+                    options: .atomic
+                )
+            }
+
+            if indexWasCustomized {
+                let indexMetadata: String
+                if let preservedIndexEntry {
+                    let reference = "refs/macentire-recovery/\(identifier)/package-list-index"
+                    _ = try gitRunner.run(
+                        ["-C", rootDirectory.path, "update-ref", reference, preservedIndexEntry.objectID],
+                        description: "Retain staged MacEntire package list recovery"
+                    )
+                    indexReference = reference
+                    indexMetadata = """
+                    mode: \(preservedIndexEntry.mode)
+                    object: \(preservedIndexEntry.objectID)
+                    path: \(packageListPath)
+                    reference: \(reference)
+                    """
+                } else {
+                    indexMetadata = """
+                    deleted: true
+                    path: \(packageListPath)
+                    """
+                }
+                try Data(indexMetadata.utf8).write(
+                    to: directoryURL.appendingPathComponent("packages.txt.index"),
+                    options: .atomic
+                )
+            }
+
+            var instructions = """
+            MacEntire package-list recovery
+            Original branch: \(originalBranch)
+            Original worktree content: packages.txt.worktree
+            """
+            if symbolicLinkDestination != nil {
+                instructions += "\nOriginal symbolic-link destination: packages.txt.symlink-destination"
+            }
+            if let indexReference {
+                instructions += "\nOriginal staged content: git show \(indexReference)"
+            }
+            instructions += "\n"
+            try Data(instructions.utf8).write(
+                to: directoryURL.appendingPathComponent("README.txt"),
+                options: .atomic
+            )
+        } catch {
+            if let indexReference {
+                _ = try? gitRunner.run(
+                    ["-C", rootDirectory.path, "update-ref", "-d", indexReference],
+                    description: "Discard incomplete MacEntire package list recovery"
+                )
+            }
+            try? fileManager.removeItem(at: directoryURL)
+            throw error
+        }
+
+        return PackageListRecoverySnapshot(
+            directoryURL: directoryURL,
+            indexReference: indexReference
+        )
+    }
+
+    private func removePackageListRecovery(
+        _ recovery: PackageListRecoverySnapshot,
+        rootDirectory: URL,
+        fileManager: FileManager
+    ) {
+        if let indexReference = recovery.indexReference {
+            _ = try? gitRunner.run(
+                ["-C", rootDirectory.path, "update-ref", "-d", indexReference],
+                description: "Remove MacEntire package list recovery reference"
+            )
+        }
+        try? fileManager.removeItem(at: recovery.directoryURL)
     }
 
     public func synchronize(_ package: PackageDefinition) throws {
@@ -827,6 +967,11 @@ public final class PackageSynchronizer: @unchecked Sendable {
 private struct GitFileEntry: Equatable {
     let mode: String
     let objectID: String
+}
+
+private struct PackageListRecoverySnapshot {
+    let directoryURL: URL
+    let indexReference: String?
 }
 
 private struct FileChangeToken: Equatable {
