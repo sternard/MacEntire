@@ -1543,6 +1543,30 @@ final class PackageSynchronizerTests: XCTestCase {
         })
     }
 
+    func testRemoteMismatchRedactsQueryAndFragmentCredentials() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(
+            remoteOutput: "https://github.com/someone-else/Example-App?access_token=secret#private",
+            statusOutput: ""
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .remoteMismatch(
+                    expected: "https://github.com/sternard/Example-App",
+                    actual: "https://github.com/someone-else/Example-App?<redacted>#<redacted>"
+                )
+            )
+            XCTAssertFalse(error.localizedDescription.contains("secret"))
+            XCTAssertFalse(error.localizedDescription.contains("private"))
+        }
+    }
+
     func testRefusesAmbiguousStoredFetchURLs() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(

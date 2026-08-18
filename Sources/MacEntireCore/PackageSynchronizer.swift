@@ -1718,10 +1718,24 @@ func redactedGitRemote(_ value: String) -> String {
         character == "/" || character == "?" || character == "#"
     } ?? remote.endIndex
     let authority = remote[authorityStart..<authorityEnd]
-    guard let userInformationEnd = authority.lastIndex(of: "@") else {
-        return remote
+    var redacted = remote
+    if let userInformationEnd = authority.lastIndex(of: "@") {
+        redacted = String(remote[..<authorityStart])
+            + String(remote[remote.index(after: userInformationEnd)...])
     }
 
-    return String(remote[..<authorityStart])
-        + String(remote[remote.index(after: userInformationEnd)...])
+    let queryStart = redacted.firstIndex(of: "?")
+    let fragmentStart = redacted.firstIndex(of: "#")
+    guard let sensitiveStart = [queryStart, fragmentStart].compactMap({ $0 }).min() else {
+        return redacted
+    }
+
+    var result = String(redacted[..<sensitiveStart])
+    if let queryStart, fragmentStart == nil || queryStart < fragmentStart! {
+        result += "?<redacted>"
+    }
+    if fragmentStart != nil {
+        result += "#<redacted>"
+    }
+    return result
 }
