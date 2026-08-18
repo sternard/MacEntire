@@ -60,14 +60,63 @@ fi
 
 mkdir -p "$INSTALL_DIR"
 TEMP_INSTALL_DIR="$(mktemp -d "$INSTALL_DIR/.${PRODUCT_NAME}.install.XXXXXX")"
-trap 'rm -rf "$TEMP_INSTALL_DIR"' EXIT
 TEMP_APP_BUNDLE="$TEMP_INSTALL_DIR/$PRODUCT_NAME.app"
+BACKUP_APP_BUNDLE="$TEMP_INSTALL_DIR/previous-$PRODUCT_NAME.app"
+CONFLICTING_APP_BUNDLE="$TEMP_INSTALL_DIR/conflicting-$PRODUCT_NAME.app"
+KEEP_INSTALL_RECOVERY=0
+
+cleanup_install() {
+    if [[ -e "$BACKUP_APP_BUNDLE" || "$KEEP_INSTALL_RECOVERY" == 1 ]]; then
+        echo "Installation recovery retained at $TEMP_INSTALL_DIR" >&2
+    else
+        rm -rf "$TEMP_INSTALL_DIR"
+    fi
+}
+trap cleanup_install EXIT
+
 cp -R "$STAGED_APP_BUNDLE" "$TEMP_APP_BUNDLE"
 
 plutil -lint "$TEMP_APP_BUNDLE/Contents/Info.plist" >/dev/null
 
-rm -rf "$APP_BUNDLE"
-mv "$TEMP_APP_BUNDLE" "$APP_BUNDLE"
+INSTALL_MARKER=".macentire-install-marker.$$.$RANDOM"
+touch "$TEMP_APP_BUNDLE/$INSTALL_MARKER"
+HAD_INSTALLED_BUNDLE=0
+if [[ -e "$APP_BUNDLE" || -L "$APP_BUNDLE" ]]; then
+    mv "$APP_BUNDLE" "$BACKUP_APP_BUNDLE"
+    HAD_INSTALLED_BUNDLE=1
+fi
+
+REPLACEMENT_SUCCEEDED=0
+if mv "$TEMP_APP_BUNDLE" "$APP_BUNDLE"; then
+    if [[ -f "$APP_BUNDLE/$INSTALL_MARKER" ]]; then
+        REPLACEMENT_SUCCEEDED=1
+    fi
+fi
+
+if [[ "$REPLACEMENT_SUCCEEDED" != 1 ]]; then
+    if [[ -e "$APP_BUNDLE" || -L "$APP_BUNDLE" ]]; then
+        if mv "$APP_BUNDLE" "$CONFLICTING_APP_BUNDLE"; then
+            KEEP_INSTALL_RECOVERY=1
+        else
+            echo "Could not replace $APP_BUNDLE; the previous installation remains at $BACKUP_APP_BUNDLE" >&2
+            exit 1
+        fi
+    fi
+    if [[ "$HAD_INSTALLED_BUNDLE" == 1 ]]; then
+        if ! mv "$BACKUP_APP_BUNDLE" "$APP_BUNDLE"; then
+            KEEP_INSTALL_RECOVERY=1
+            echo "Could not restore $APP_BUNDLE; the previous installation remains at $BACKUP_APP_BUNDLE" >&2
+            exit 1
+        fi
+    fi
+    echo "Could not replace $APP_BUNDLE; the previous installation was restored" >&2
+    exit 1
+fi
+
+rm -f "$APP_BUNDLE/$INSTALL_MARKER"
+if [[ "$HAD_INSTALLED_BUNDLE" == 1 ]]; then
+    rm -rf "$BACKUP_APP_BUNDLE"
+fi
 rmdir "$TEMP_INSTALL_DIR"
 trap - EXIT
 
