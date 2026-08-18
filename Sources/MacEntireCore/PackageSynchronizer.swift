@@ -855,7 +855,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
 
             let remote = try gitRunner.run(
-                ["-C", package.directoryURL.path, "remote", "get-url", "origin"],
+                ["-C", package.directoryURL.path, "config", "--get", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
             )
             guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
@@ -929,7 +929,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             )
 
             let remote = try gitRunner.run(
-                ["-C", package.directoryURL.path, "remote", "get-url", "origin"],
+                ["-C", package.directoryURL.path, "config", "--get", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
             )
             guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {

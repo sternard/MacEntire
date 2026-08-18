@@ -246,6 +246,31 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertEqual(packages.first?.state, .ready)
     }
 
+    func testReportsRewrittenTransportOriginAsReady() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(
+                remote: "git@github.com:sternard/Storage-Assistant.git",
+                rawRemote: "https://github.com/sternard/Storage-Assistant"
+            )
+        )
+
+        XCTAssertEqual(packages.first?.state, .ready)
+    }
+
     func testReportsNonExecutableLauncherAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
@@ -493,15 +518,18 @@ private func writeExecutableWorkspaceLauncher(at url: URL) throws {
 
 private struct WorkspaceGitRunner: GitRunning {
     let remote: String
+    let rawRemote: String?
     let topLevel: String?
     let currentBranch: String
 
     init(
         remote: String = "https://github.com/sternard/Storage-Assistant.git",
+        rawRemote: String? = nil,
         topLevel: String? = nil,
         currentBranch: String = "develop"
     ) {
         self.remote = remote
+        self.rawRemote = rawRemote
         self.topLevel = topLevel
         self.currentBranch = currentBranch
     }
@@ -512,6 +540,9 @@ private struct WorkspaceGitRunner: GitRunning {
         }
         if arguments.contains("branch") {
             return currentBranch
+        }
+        if arguments.suffix(3) == ["config", "--get", "remote.origin.url"] {
+            return rawRemote ?? remote
         }
         return remote
     }

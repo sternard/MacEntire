@@ -246,7 +246,7 @@ public struct PackageWorkspace: Sendable {
             let remote: String
             do {
                 remote = try gitRunner.run(
-                    ["-C", definition.directoryURL.path, "remote", "get-url", "origin"],
+                    ["-C", definition.directoryURL.path, "config", "--get", "remote.origin.url"],
                     description: "Read \(definition.repositoryName) origin"
                 )
             } catch {

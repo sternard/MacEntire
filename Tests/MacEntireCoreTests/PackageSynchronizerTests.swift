@@ -753,9 +753,41 @@ final class PackageSynchronizerTests: XCTestCase {
                 "clone", "--origin", "origin", "--branch", "release/next", "--single-branch",
                 "https://github.com/sternard/Example-App", directory.path
             ],
-            ["-C", directory.path, "remote", "get-url", "origin"],
+            ["-C", directory.path, "config", "--get", "remote.origin.url"],
             ["-C", directory.path, "branch", "--show-current"]
         ])
+    }
+
+    func testCloneWithRewrittenTransportUsesStoredOrigin() throws {
+        let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: directory
+        )
+        let git = FakeGitRunner(
+            remoteOutput: "git@github.com:sternard/Example-App.git",
+            rawRemoteOutput: "https://github.com/sternard/Example-App",
+            statusOutput: ""
+        ) {
+            try FileManager.default.createDirectory(
+                at: directory.appendingPathComponent("scripts", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            try self.writeExecutableLauncher(
+                at: directory.appendingPathComponent("scripts/run-app.sh")
+            )
+        }
+
+        try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronize(package)
+
+        XCTAssertTrue(git.commands.contains {
+            $0.suffix(3) == ["config", "--get", "remote.origin.url"]
+        })
     }
 
     func testRefusesCloneWhoseEffectiveOriginDoesNotMatchConfiguration() throws {
@@ -789,7 +821,7 @@ final class PackageSynchronizerTests: XCTestCase {
                 "clone", "--origin", "origin",
                 "https://github.com/sternard/Example-App", directory.path
             ],
-            ["-C", directory.path, "remote", "get-url", "origin"]
+            ["-C", directory.path, "config", "--get", "remote.origin.url"]
         ])
     }
 
@@ -816,7 +848,7 @@ final class PackageSynchronizerTests: XCTestCase {
                 "clone", "--origin", "origin", "--branch", "release", "--single-branch",
                 "https://github.com/sternard/Example-App", directory.path
             ],
-            ["-C", directory.path, "remote", "get-url", "origin"],
+            ["-C", directory.path, "config", "--get", "remote.origin.url"],
             ["-C", directory.path, "branch", "--show-current"]
         ])
     }
@@ -843,7 +875,7 @@ final class PackageSynchronizerTests: XCTestCase {
                 "clone", "--origin", "origin",
                 "https://github.com/sternard/Example-App", directory.path
             ],
-            ["-C", directory.path, "remote", "get-url", "origin"],
+            ["-C", directory.path, "config", "--get", "remote.origin.url"],
             ["-C", directory.path, "branch", "--show-current"]
         ])
     }
@@ -1237,6 +1269,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
 private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private(set) var commands: [[String]] = []
     private let remoteOutput: String
+    private let rawRemoteOutput: String?
     private let topLevelOutput: String?
     private let currentBranchOutput: String
     private let currentBranchOutputAfterFetch: String?
@@ -1246,6 +1279,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
 
     init(
         remoteOutput: String = "https://github.com/sternard/Example-App.git",
+        rawRemoteOutput: String? = nil,
         topLevelOutput: String? = nil,
         currentBranchOutput: String = "main",
         currentBranchOutputAfterFetch: String? = nil,
@@ -1253,6 +1287,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         cloneHandler: (() throws -> Void)? = nil
     ) {
         self.remoteOutput = remoteOutput
+        self.rawRemoteOutput = rawRemoteOutput
         self.topLevelOutput = topLevelOutput
         self.currentBranchOutput = currentBranchOutput
         self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
@@ -1264,6 +1299,9 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         commands.append(arguments)
         if arguments.contains("rev-parse") {
             return topLevelOutput ?? arguments[1]
+        }
+        if arguments.suffix(3) == ["config", "--get", "remote.origin.url"] {
+            return rawRemoteOutput ?? remoteOutput
         }
         if arguments.contains("remote") {
             return remoteOutput
