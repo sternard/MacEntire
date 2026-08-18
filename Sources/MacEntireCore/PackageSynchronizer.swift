@@ -88,6 +88,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case symbolicLinkPackagesDirectory
     case remoteMismatch(expected: String, actual: String)
     case branchMismatch(repository: String, expected: String, actual: String)
+    case branchRevisionChanged(String)
     case detachedHead(String)
     case localChanges(String)
     case missingLauncher(String)
@@ -112,6 +113,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "Origin is \(actual), expected \(expected)."
         case .branchMismatch(let repository, let expected, let actual):
             return "\(repository) is on branch \(actual), expected \(expected); update skipped."
+        case .branchRevisionChanged(let name):
+            return "\(name) branch changed during update; update skipped."
         case .detachedHead(let name):
             return "\(name) has a detached HEAD; update skipped."
         case .localChanges(let name):
@@ -1043,6 +1046,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 }
             }
 
+            let revision = try gitRunner.run(
+                ["-C", checkoutURL.path, "rev-parse", "HEAD"],
+                description: "Read \(package.repositoryName) revision"
+            )
             let branch = package.branch ?? currentBranch
             _ = try gitRunner.run(
                 ["-C", checkoutURL.path, "fetch", "origin", "refs/heads/\(branch)"],
@@ -1075,6 +1082,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     expected: branch,
                     actual: branchAfterFetch
                 )
+            }
+            let revisionAfterFetch = try gitRunner.run(
+                ["-C", checkoutURL.path, "rev-parse", "HEAD"],
+                description: "Revalidate \(package.repositoryName) revision"
+            )
+            guard revisionAfterFetch == revision else {
+                throw PackageSyncError.branchRevisionChanged(package.repositoryName)
             }
             _ = try gitRunner.run(
                 [

@@ -992,6 +992,28 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(git.commands.contains { $0.contains("merge") })
     }
 
+    func testRefusesPackageRevisionChangedDuringFetch() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(
+            revisionOutput: "original-revision",
+            revisionOutputAfterFetch: "user-reset-revision",
+            statusOutput: ""
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .branchRevisionChanged("Example-App")
+            )
+        }
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
     func testRefusesOriginChangedDuringFetch() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(
@@ -1905,6 +1927,8 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private let rawRemoteOutput: String?
     private let rawRemoteOutputAfterFetch: String?
     private let topLevelOutput: String?
+    private let revisionOutput: String
+    private let revisionOutputAfterFetch: String?
     private let currentBranchOutput: String
     private let currentBranchOutputAfterFetch: String?
     private let statusOutput: String
@@ -1916,6 +1940,8 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         rawRemoteOutput: String? = nil,
         rawRemoteOutputAfterFetch: String? = nil,
         topLevelOutput: String? = nil,
+        revisionOutput: String = "current-revision",
+        revisionOutputAfterFetch: String? = nil,
         currentBranchOutput: String = "main",
         currentBranchOutputAfterFetch: String? = nil,
         statusOutput: String,
@@ -1925,6 +1951,8 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         self.rawRemoteOutput = rawRemoteOutput
         self.rawRemoteOutputAfterFetch = rawRemoteOutputAfterFetch
         self.topLevelOutput = topLevelOutput
+        self.revisionOutput = revisionOutput
+        self.revisionOutputAfterFetch = revisionOutputAfterFetch
         self.currentBranchOutput = currentBranchOutput
         self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
         self.statusOutput = statusOutput
@@ -1933,6 +1961,9 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
 
     func run(_ arguments: [String], description: String) throws -> String {
         commands.append(arguments)
+        if arguments.suffix(2) == ["rev-parse", "HEAD"] {
+            return didFetch ? revisionOutputAfterFetch ?? revisionOutput : revisionOutput
+        }
         if arguments.contains("rev-parse") {
             return topLevelOutput ?? arguments[1]
         }
