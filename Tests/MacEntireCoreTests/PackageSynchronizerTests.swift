@@ -1016,6 +1016,64 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(retryGit.commands.first?.first, "clone")
     }
 
+    func testFailedCloneDoesNotDeleteReservedCheckoutAfterItIsMoved() throws {
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let directory = packagesDirectory.appendingPathComponent("Example-App", isDirectory: true)
+        let movedDirectory = temporaryRoot.appendingPathComponent(
+            "Moved-Example-App",
+            isDirectory: true
+        )
+        let externalDirectory = temporaryRoot.appendingPathComponent(
+            "External-Example-App",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: externalDirectory, withIntermediateDirectories: true)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: directory
+        )
+        let git = FakeGitRunner(statusOutput: "") { arguments in
+            let cloneDirectory = URL(
+                fileURLWithPath: try XCTUnwrap(arguments.last),
+                isDirectory: true
+            )
+            try Data("partial clone".utf8).write(
+                to: cloneDirectory.appendingPathComponent("partial-pack"),
+                options: .atomic
+            )
+            try FileManager.default.moveItem(at: directory, to: movedDirectory)
+            try Data("unrelated".utf8).write(
+                to: movedDirectory.appendingPathComponent("unrelated-file"),
+                options: .atomic
+            )
+            try FileManager.default.createSymbolicLink(
+                at: directory,
+                withDestinationURL: externalDirectory
+            )
+            throw PackageSyncError.commandFailed(
+                command: "Clone Example-App",
+                output: "network unavailable"
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronize(package)
+        )
+        XCTAssertEqual(
+            Set(try FileManager.default.contentsOfDirectory(atPath: movedDirectory.path)),
+            ["partial-pack", "unrelated-file"]
+        )
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: externalDirectory.path),
+            []
+        )
+    }
+
     func testCloneWithRewrittenTransportUsesStoredOrigin() throws {
         let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
         let package = PackageDefinition(

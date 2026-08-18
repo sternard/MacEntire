@@ -1239,18 +1239,25 @@ private func removeReservedCheckoutAfterCloneFailure(
     from packagesDirectory: StableDirectoryHandle,
     fileManager: FileManager = .default
 ) {
+    let visibleCheckout = packagesDirectory.url.appendingPathComponent(
+        repositoryName,
+        isDirectory: true
+    )
+    guard checkoutDirectory.matches(visibleCheckout) else {
+        return
+    }
+
     let entries = (try? fileManager.contentsOfDirectory(
         at: checkoutDirectory.url,
         includingPropertiesForKeys: nil
     )) ?? []
     for entry in entries {
+        guard checkoutDirectory.matches(visibleCheckout) else {
+            return
+        }
         try? fileManager.removeItem(at: entry)
     }
 
-    let visibleCheckout = packagesDirectory.url.appendingPathComponent(
-        repositoryName,
-        isDirectory: true
-    )
     guard checkoutDirectory.matches(visibleCheckout) else {
         return
     }
