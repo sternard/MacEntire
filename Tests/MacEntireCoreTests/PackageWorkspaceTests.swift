@@ -213,6 +213,33 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testReportsPackagesUnderSymlinkedDirectoryAsUnavailable() throws {
+        let externalPackagesDirectory = temporaryRoot.appendingPathComponent(
+            "External-Packages",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: externalPackagesDirectory,
+            withIntermediateDirectories: true
+        )
+        try "https://github.com/sternard/Storage-Assistant".write(
+            to: externalPackagesDirectory.appendingPathComponent("packages.txt"),
+            atomically: true,
+            encoding: .utf8
+        )
+        try FileManager.default.createSymbolicLink(
+            at: temporaryRoot.appendingPathComponent("Packages", isDirectory: true),
+            withDestinationURL: externalPackagesDirectory
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages()
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("The Packages directory is a symbolic link.")
+        )
+    }
+
     func testReportsRepositoryOnWrongConfiguredBranchAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant -b develop")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)

@@ -98,7 +98,18 @@ public struct PackageWorkspace: Sendable {
         fileManager: FileManager = .default,
         gitRunner: any GitRunning = ProcessGitRunner()
     ) throws -> [ManagedPackage] {
-        try definitions().map { definition in
+        let definitions = try definitions()
+        if isSymbolicLink(at: packagesDirectory, fileManager: fileManager) {
+            let error = PackageSyncError.symbolicLinkPackagesDirectory
+            return definitions.map { definition in
+                ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+        }
+
+        return definitions.map { definition in
             guard !isSymbolicLink(at: definition.directoryURL, fileManager: fileManager) else {
                 let error = PackageSyncError.symbolicLinkCheckout(definition.repositoryName)
                 return ManagedPackage(

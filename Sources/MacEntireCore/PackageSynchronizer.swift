@@ -28,6 +28,7 @@ public struct SynchronizationSummary: Equatable, Sendable {
 public enum PackageSyncError: LocalizedError, Equatable {
     case destinationIsNotRepository(String)
     case symbolicLinkCheckout(String)
+    case symbolicLinkPackagesDirectory
     case remoteMismatch(expected: String, actual: String)
     case branchMismatch(repository: String, expected: String, actual: String)
     case detachedHead(String)
@@ -44,6 +45,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) already exists but is not a Git repository."
         case .symbolicLinkCheckout(let name):
             return "\(name) checkout path is a symbolic link."
+        case .symbolicLinkPackagesDirectory:
+            return "The Packages directory is a symbolic link."
         case .remoteMismatch(let expected, let actual):
             return "Origin is \(actual), expected \(expected)."
         case .branchMismatch(let repository, let expected, let actual):
@@ -213,6 +216,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
     }
 
     func synchronizeMacEntire() throws {
+        guard !isSymbolicLink(at: workspace.packagesDirectory) else {
+            throw PackageSyncError.symbolicLinkPackagesDirectory
+        }
+
         let rootDirectory = workspace.rootDirectory
         let resolvedTopLevel = try gitRunner.run(
             ["-C", rootDirectory.path, "rev-parse", "--show-toplevel"],
@@ -325,6 +332,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
     }
 
     public func synchronize(_ package: PackageDefinition) throws {
+        guard !isSymbolicLink(at: workspace.packagesDirectory) else {
+            throw PackageSyncError.symbolicLinkPackagesDirectory
+        }
+
         try FileManager.default.createDirectory(
             at: workspace.packagesDirectory,
             withIntermediateDirectories: true
