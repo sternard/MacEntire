@@ -1,3 +1,4 @@
+import Darwin
 import XCTest
 @testable import MacEntireCore
 
@@ -14,6 +15,18 @@ final class PackageSynchronizerTests: XCTestCase {
         if let temporaryRoot {
             try? FileManager.default.removeItem(at: temporaryRoot)
         }
+    }
+
+    func testStableDirectoryHandlesAreClosedWhenLaunchingProcesses() throws {
+        let descriptor = open(temporaryRoot.path, O_RDONLY | O_DIRECTORY)
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+
+        let handle = try StableDirectoryHandle(descriptor: descriptor)
+        let descriptorFlags = fcntl(handle.descriptor, F_GETFD)
+
+        XCTAssertGreaterThanOrEqual(descriptorFlags, 0)
+        XCTAssertEqual(descriptorFlags & FD_CLOEXEC, FD_CLOEXEC)
+        withExtendedLifetime(handle) {}
     }
 
     func testMacEntireUpdatePullsAndRestoresCustomizedPackageList() throws {

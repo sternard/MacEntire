@@ -1240,6 +1240,15 @@ final class StableDirectoryHandle: @unchecked Sendable {
     let inode: ino_t
 
     init(descriptor: Int32) throws {
+        let descriptorFlags = fcntl(descriptor, F_GETFD)
+        guard
+            descriptorFlags >= 0,
+            fcntl(descriptor, F_SETFD, descriptorFlags | FD_CLOEXEC) == 0
+        else {
+            let error = posixError(errno)
+            close(descriptor)
+            throw error
+        }
         var metadata = stat()
         guard fstat(descriptor, &metadata) == 0 else {
             let error = posixError(errno)
