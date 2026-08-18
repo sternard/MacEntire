@@ -314,6 +314,14 @@ public final class PackageSynchronizer: @unchecked Sendable {
         } else {
             var arguments = ["clone", "--origin", "origin"]
             if let branch = package.branch {
+                _ = try gitRunner.run(
+                    [
+                        "ls-remote", "--exit-code", "--heads",
+                        package.repositoryURL.absoluteString,
+                        "refs/heads/\(branch)"
+                    ],
+                    description: "Find \(package.repositoryName) branch"
+                )
                 arguments.append(contentsOf: ["--branch", branch, "--single-branch"])
             }
             arguments.append(contentsOf: [

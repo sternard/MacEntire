@@ -32,7 +32,7 @@ Markdown links are also accepted:
 [Storage Assistant](https://github.com/sternard/Storage-Assistant)
 ```
 
-Append `-b branch-name` to clone and track a specific branch. Existing checkouts must already be on the configured branch; MacEntire reports a mismatch instead of switching branches automatically.
+Append `-b branch-name` to clone and track a specific branch. The name must identify a branch on the remote; a same-named tag is not accepted. Existing checkouts must already be on the configured branch, and MacEntire reports a mismatch instead of switching branches automatically.
 
 Blank lines and lines beginning with `#` or `//` are ignored.
 
@@ -47,7 +47,7 @@ https://github.com/sternard/Screen-Swap
 
 `ignore.txt` accepts the same raw URLs, Markdown links, comments, and optional branch suffixes as `packages.txt`. It is ignored by Git, so MacEntire can update the shared catalog without changing local exclusions.
 
-Ignoring a package prevents it from appearing or synchronizing. An existing checkout is left untouched and can be restored by removing its entry from `ignore.txt`.
+Ignoring a package prevents it from appearing or synchronizing. Entries are matched by GitHub owner and repository, so the same repository name under a different owner is not excluded. An existing checkout is left untouched and can be restored by removing its entry from `ignore.txt`.
 
 Each active package must provide:
 

@@ -164,6 +164,7 @@ private final class PackageCatalog: ObservableObject {
     private let synchronizer: PackageSynchronizer
     private let pendingReinstallationStore: PendingReinstallationStore
     private var refreshGeneration = 0
+    private var statusMessageIsInspectionError = false
 
     init(
         rootDirectory: URL = WorkspaceRoot.resolve(),
@@ -197,6 +198,12 @@ private final class PackageCatalog: ObservableObject {
                         $1.definition.displayName
                     ) == .orderedAscending
                 }
+                if statusMessageIsInspectionError {
+                    statusMessage = pendingReinstallationStore.statusMessage(
+                        for: workspace.rootDirectory
+                    )
+                    statusMessageIsInspectionError = false
+                }
                 if packages.isEmpty, statusMessage == nil {
                     statusMessage = "No packages configured"
                 } else if !packages.isEmpty, statusMessage == "No packages configured" {
@@ -205,6 +212,7 @@ private final class PackageCatalog: ObservableObject {
             case .failure(let error):
                 packages = []
                 statusMessage = error.localizedDescription
+                statusMessageIsInspectionError = true
             }
         }
     }
@@ -216,6 +224,7 @@ private final class PackageCatalog: ObservableObject {
 
         isSynchronizing = true
         statusMessage = "Syncing MacEntire and packages…"
+        statusMessageIsInspectionError = false
         let synchronizer = synchronizer
 
         Task {
@@ -240,6 +249,8 @@ private final class PackageCatalog: ObservableObject {
             }
 
             statusMessage = message
+            statusMessageIsInspectionError = false
+            packages = []
             isSynchronizing = false
             refresh()
         }
@@ -282,6 +293,7 @@ private final class PackageCatalog: ObservableObject {
             runningProcesses[package.id] = nil
             statusMessage = "Could not launch \(package.definition.displayName): "
                 + error.localizedDescription
+            statusMessageIsInspectionError = false
         }
     }
 
@@ -294,6 +306,7 @@ private final class PackageCatalog: ObservableObject {
             NSWorkspace.shared.open(workspace.packagesDirectory)
         } catch {
             statusMessage = "Could not open Packages: \(error.localizedDescription)"
+            statusMessageIsInspectionError = false
         }
     }
 }

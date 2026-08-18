@@ -249,10 +249,51 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronize(package)
 
-        XCTAssertEqual(git.commands, [[
-            "clone", "--origin", "origin", "--branch", "release/next", "--single-branch",
-            package.repositoryURL.absoluteString, directory.path
-        ]])
+        XCTAssertEqual(git.commands, [
+            [
+                "ls-remote", "--exit-code", "--heads",
+                package.repositoryURL.absoluteString,
+                "refs/heads/release/next"
+            ],
+            [
+                "clone", "--origin", "origin", "--branch", "release/next", "--single-branch",
+                package.repositoryURL.absoluteString, directory.path
+            ]
+        ])
+    }
+
+    func testMissingRepositoryRejectsConfiguredTagBeforeCloning() throws {
+        let directory = temporaryRoot.appendingPathComponent(
+            "Packages/Example-App",
+            isDirectory: true
+        )
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            branch: "release",
+            directoryURL: directory
+        )
+        let missingBranch = PackageSyncError.commandFailed(
+            command: "Find Example-App branch",
+            output: "No matching branch"
+        )
+        let git = RecordingGitRunner { arguments, _ in
+            if arguments.first == "ls-remote" {
+                throw missingBranch
+            }
+            return ""
+        }
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, missingBranch)
+        }
+        XCTAssertFalse(git.commands.contains { $0.first == "clone" })
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
     func testRemoteMismatchRedactsCredentials() throws {

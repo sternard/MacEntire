@@ -63,13 +63,15 @@ public struct PackageWorkspace: Sendable {
             return configured
         }
 
-        let ignoredNames = Set(try parser.parse(
+        let ignoredRepositories = Set(try parser.parse(
             contents(of: ignoreListURL),
             packagesDirectory: packagesDirectory
-        ).map { $0.repositoryName.lowercased() })
+        ).map { normalizedGitRemote($0.repositoryURL.absoluteString) })
 
         return configured.filter {
-            !ignoredNames.contains($0.repositoryName.lowercased())
+            !ignoredRepositories.contains(
+                normalizedGitRemote($0.repositoryURL.absoluteString)
+            )
         }
     }
 
