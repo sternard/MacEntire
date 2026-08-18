@@ -389,6 +389,20 @@ public struct PackageWorkspace: Sendable {
                 )
             }
 
+            let visibleCheckout = packagesDirectoryHandle.url.appendingPathComponent(
+                definition.repositoryName,
+                isDirectory: true
+            )
+            guard checkoutDirectoryHandle.matches(visibleCheckout) else {
+                let error = PackageSyncError.destinationIsNotRepository(
+                    definition.repositoryName
+                )
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
             return ManagedPackage(
                 definition: definition,
                 state: .ready,

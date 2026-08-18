@@ -291,6 +291,44 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testRejectsCheckoutReplacementDuringInspection() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent(
+            "Packages/Storage-Assistant",
+            isDirectory: true
+        )
+        let movedRepository = temporaryRoot.appendingPathComponent(
+            "Moved-Storage-Assistant",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: ReplacingWorkspaceGitRunner {
+                try FileManager.default.moveItem(at: repository, to: movedRepository)
+                try FileManager.default.createDirectory(
+                    at: repository,
+                    withIntermediateDirectories: true
+                )
+            }
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("Storage-Assistant already exists but is not a Git repository.")
+        )
+    }
+
     func testLaunchUsesPinnedCheckoutAfterPackagesDirectoryReplacement() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let visiblePackages = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
