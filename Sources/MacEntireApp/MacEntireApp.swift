@@ -7,6 +7,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
     }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        ApplicationTerminationCoordinator.shared.applicationShouldTerminate()
+    }
+}
+
+@MainActor
+private final class ApplicationTerminationCoordinator {
+    static let shared = ApplicationTerminationCoordinator()
+
+    private var state = ApplicationTerminationState()
+
+    func beginSynchronization() {
+        state.beginSynchronization()
+    }
+
+    func endSynchronization() {
+        if state.endSynchronization() {
+            NSApp.reply(toApplicationShouldTerminate: true)
+        }
+    }
+
+    func applicationShouldTerminate() -> NSApplication.TerminateReply {
+        state.requestTermination() ? .terminateNow : .terminateLater
+    }
 }
 
 @main
@@ -163,15 +188,20 @@ private final class PackageCatalog: ObservableObject {
     private let workspace: PackageWorkspace
     private let inspector: PackageInspector
     private let synchronizer: PackageSynchronizer
+    private let terminationCoordinator: ApplicationTerminationCoordinator
     private let launcher = PackageLauncher()
     private var launchStatusState = PackageLaunchStatusState()
     private var refreshGeneration = 0
 
-    init(rootDirectory: URL = WorkspaceRoot.resolve()) {
+    init(
+        rootDirectory: URL = WorkspaceRoot.resolve(),
+        terminationCoordinator: ApplicationTerminationCoordinator? = nil
+    ) {
         let workspace = PackageWorkspace(rootDirectory: rootDirectory)
         self.workspace = workspace
         self.inspector = PackageInspector(workspace: workspace)
         self.synchronizer = PackageSynchronizer(workspace: workspace)
+        self.terminationCoordinator = terminationCoordinator ?? .shared
         refresh()
     }
 
@@ -207,6 +237,7 @@ private final class PackageCatalog: ObservableObject {
         guard operationState.beginSynchronization() else {
             return
         }
+        terminationCoordinator.beginSynchronization()
 
         statusMessage = "Syncing MacEntire and packages…"
         let synchronizer = synchronizer
@@ -217,6 +248,7 @@ private final class PackageCatalog: ObservableObject {
             }.value
 
             operationState.endSynchronization()
+            terminationCoordinator.endSynchronization()
             switch result {
             case .success(let summary):
                 statusMessage = summary.statusMessage

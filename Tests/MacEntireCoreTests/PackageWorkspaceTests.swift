@@ -77,6 +77,24 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertFalse(operations.beginLaunch())
     }
 
+    func testTerminationIsDeferredUntilSynchronizationEnds() {
+        var termination = ApplicationTerminationState()
+        termination.beginSynchronization()
+
+        XCTAssertFalse(termination.requestTermination())
+        XCTAssertTrue(termination.isTerminationDeferred)
+        XCTAssertTrue(termination.endSynchronization())
+        XCTAssertFalse(termination.isTerminationDeferred)
+        XCTAssertFalse(termination.isSynchronizationInProgress)
+    }
+
+    func testTerminationProceedsImmediatelyOutsideSynchronization() {
+        var termination = ApplicationTerminationState()
+
+        XCTAssertTrue(termination.requestTermination())
+        XCTAssertFalse(termination.isTerminationDeferred)
+    }
+
     func testUnavailablePackageDisplayTitleIncludesReason() {
         let definition = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Storage-Assistant")!,

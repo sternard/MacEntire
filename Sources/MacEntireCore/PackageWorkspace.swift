@@ -41,6 +41,32 @@ public struct PackageOperationState: Equatable, Sendable {
     }
 }
 
+public struct ApplicationTerminationState: Equatable, Sendable {
+    public private(set) var isSynchronizationInProgress = false
+    public private(set) var isTerminationDeferred = false
+
+    public init() {}
+
+    public mutating func beginSynchronization() {
+        isSynchronizationInProgress = true
+    }
+
+    public mutating func requestTermination() -> Bool {
+        guard isSynchronizationInProgress else {
+            return true
+        }
+        isTerminationDeferred = true
+        return false
+    }
+
+    public mutating func endSynchronization() -> Bool {
+        isSynchronizationInProgress = false
+        let shouldCompleteDeferredTermination = isTerminationDeferred
+        isTerminationDeferred = false
+        return shouldCompleteDeferredTermination
+    }
+}
+
 public struct ManagedPackage: Identifiable, Equatable, Sendable {
     public let definition: PackageDefinition
     public let state: PackageState
