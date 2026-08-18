@@ -116,4 +116,21 @@ final class PackageListTests: XCTestCase {
             XCTAssertEqual(error as? PackageListError, .duplicateDirectory(line: 2, name: "example-app"))
         }
     }
+
+    func testCRLFRecordsUseLogicalLineNumbers() {
+        let contents = [
+            "https://github.com/first/Example-App",
+            "# comment",
+            "https://github.com/second/example-app"
+        ].joined(separator: "\r\n")
+
+        XCTAssertThrowsError(
+            try PackageListParser().parse(contents, packagesDirectory: packagesDirectory)
+        ) { error in
+            XCTAssertEqual(
+                error as? PackageListError,
+                .duplicateDirectory(line: 3, name: "example-app")
+            )
+        }
+    }
 }

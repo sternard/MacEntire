@@ -60,7 +60,11 @@ public struct PackageListParser: Sendable {
         var packages: [PackageDefinition] = []
         var directoryNames = Set<String>()
 
-        for (offset, rawLine) in contents.components(separatedBy: .newlines).enumerated() {
+        for (offset, rawLine) in contents.split(
+            maxSplits: .max,
+            omittingEmptySubsequences: false,
+            whereSeparator: \.isNewline
+        ).enumerated() {
             let lineNumber = offset + 1
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
 
