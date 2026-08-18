@@ -195,6 +195,7 @@ private final class PackageCatalog: ObservableObject {
     private let launcher = PackageLauncher()
     private var launchStatusState = PackageLaunchStatusState()
     private var refreshGeneration = 0
+    private var statusMessageIsInspectionError = false
 
     init(
         rootDirectory: URL = WorkspaceRoot.resolve(),
@@ -224,14 +225,17 @@ private final class PackageCatalog: ObservableObject {
                 }
                 statusMessage = refreshedPackageCatalogStatusMessage(
                     currentMessage: statusMessage,
-                    packagesAreEmpty: packages.isEmpty
+                    packagesAreEmpty: packages.isEmpty,
+                    currentMessageIsInspectionError: statusMessageIsInspectionError
                 )
+                statusMessageIsInspectionError = false
             } catch {
                 guard generation == refreshGeneration else {
                     return
                 }
                 packages = []
                 statusMessage = error.localizedDescription
+                statusMessageIsInspectionError = true
             }
         }
     }
@@ -242,7 +246,7 @@ private final class PackageCatalog: ObservableObject {
         }
         terminationCoordinator.beginSynchronization()
 
-        statusMessage = "Syncing MacEntire and packages…"
+        publishOperationStatus("Syncing MacEntire and packages…")
         let synchronizer = synchronizer
 
         Task {
@@ -254,9 +258,9 @@ private final class PackageCatalog: ObservableObject {
             terminationCoordinator.endSynchronization()
             switch result {
             case .success(let summary):
-                statusMessage = summary.statusMessage
+                publishOperationStatus(summary.statusMessage)
             case .failure(let error):
-                statusMessage = error.localizedDescription
+                publishOperationStatus(error.localizedDescription)
             }
             refresh(forceInspection: true)
         }
@@ -268,7 +272,7 @@ private final class PackageCatalog: ObservableObject {
         }
 
         let launchIdentifier = launchStatusState.beginLaunch(packageName: package.displayName)
-        statusMessage = launchStatusState.message
+        publishOperationStatus(launchStatusState.message)
 
         do {
             try launcher.launch(package) { [weak self] result in
@@ -278,7 +282,7 @@ private final class PackageCatalog: ObservableObject {
                     }
                     operationState.endLaunch(packageIdentifier: package.id)
                     launchStatusState.completeLaunch(identifier: launchIdentifier, result: result)
-                    statusMessage = launchStatusState.message
+                    publishOperationStatus(launchStatusState.message)
                 }
             }
         } catch {
@@ -287,7 +291,7 @@ private final class PackageCatalog: ObservableObject {
                 identifier: launchIdentifier,
                 message: "Could not launch \(package.displayName): \(error.localizedDescription)"
             )
-            statusMessage = launchStatusState.message
+            publishOperationStatus(launchStatusState.message)
         }
     }
 
@@ -300,8 +304,13 @@ private final class PackageCatalog: ObservableObject {
             try FileManager.default.createDirectory(at: workspace.packagesDirectory, withIntermediateDirectories: true)
             NSWorkspace.shared.open(workspace.packagesDirectory)
         } catch {
-            statusMessage = "Could not open Packages: \(error.localizedDescription)"
+            publishOperationStatus("Could not open Packages: \(error.localizedDescription)")
         }
+    }
+
+    private func publishOperationStatus(_ message: String?) {
+        statusMessage = message
+        statusMessageIsInspectionError = false
     }
 }
 

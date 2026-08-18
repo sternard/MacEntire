@@ -111,8 +111,10 @@ public struct ManagedPackage: Identifiable, Equatable, Sendable {
 
 public func refreshedPackageCatalogStatusMessage(
     currentMessage: String?,
-    packagesAreEmpty: Bool
+    packagesAreEmpty: Bool,
+    currentMessageIsInspectionError: Bool = false
 ) -> String? {
+    let currentMessage = currentMessageIsInspectionError ? nil : currentMessage
     if packagesAreEmpty {
         return currentMessage ?? "No packages configured"
     }

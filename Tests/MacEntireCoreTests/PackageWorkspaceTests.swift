@@ -52,6 +52,33 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testSuccessfulRefreshClearsPreviousInspectionError() {
+        XCTAssertNil(refreshedPackageCatalogStatusMessage(
+            currentMessage: "Could not read the package list",
+            packagesAreEmpty: false,
+            currentMessageIsInspectionError: true
+        ))
+        XCTAssertEqual(
+            refreshedPackageCatalogStatusMessage(
+                currentMessage: "Could not read the package list",
+                packagesAreEmpty: true,
+                currentMessageIsInspectionError: true
+            ),
+            "No packages configured"
+        )
+    }
+
+    func testSuccessfulRefreshPreservesOperationStatus() {
+        XCTAssertEqual(
+            refreshedPackageCatalogStatusMessage(
+                currentMessage: "MacEntire updated — quit and run scripts/install-app.sh to install it",
+                packagesAreEmpty: false,
+                currentMessageIsInspectionError: false
+            ),
+            "MacEntire updated — quit and run scripts/install-app.sh to install it"
+        )
+    }
+
     func testReadyPackageLaunchIsDisabledWhileSynchronizing() {
         let definition = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Storage-Assistant")!,
