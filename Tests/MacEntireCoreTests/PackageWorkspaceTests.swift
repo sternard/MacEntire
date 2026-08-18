@@ -178,6 +178,30 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertEqual(packages.first?.state, .ready)
     }
 
+    func testReportsCredentialBearingOriginForConfiguredRepositoryAsReady() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(
+                remote: "https://x-access-token:secret@github.com/sternard/Storage-Assistant.git"
+            )
+        )
+
+        XCTAssertEqual(packages.first?.state, .ready)
+    }
+
     func testReportsNonExecutableLauncherAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)

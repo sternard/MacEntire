@@ -447,6 +447,23 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(git.commands.contains { $0.contains("pull") })
     }
 
+    func testCredentialBearingOriginForConfiguredRepositorySynchronizes() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(
+            remoteOutput: "https://x-access-token:secret@github.com/sternard/Example-App.git",
+            statusOutput: ""
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        try synchronizer.synchronize(package)
+
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+        XCTAssertTrue(git.commands.contains { $0.contains("merge") })
+    }
+
     func testConfiguredBranchFetchesExplicitlyFromOriginAndFastForwardsSafely() throws {
         let package = try makeInstalledPackage(branch: "develop")
         let git = FakeGitRunner(currentBranchOutput: "develop", statusOutput: "")

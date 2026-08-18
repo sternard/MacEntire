@@ -756,7 +756,7 @@ private func packageListTreeEntry(from output: String) -> GitFileEntry? {
 }
 
 func normalizedGitRemote(_ value: String) -> String {
-    var normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    var normalized = redactedGitRemote(value)
     while normalized.hasSuffix("/") {
         normalized.removeLast()
     }
