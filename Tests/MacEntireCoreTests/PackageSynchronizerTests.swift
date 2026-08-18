@@ -503,6 +503,33 @@ final class PackageSynchronizerTests: XCTestCase {
         ])
     }
 
+    func testRefusesDefaultBranchCloneThatLandsOnDetachedHead() throws {
+        let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: directory
+        )
+        let git = FakeGitRunner(currentBranchOutput: "", statusOutput: "")
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(error as? PackageSyncError, .detachedHead("Example-App"))
+        }
+        XCTAssertEqual(git.commands, [
+            [
+                "clone", "--origin", "origin",
+                "https://github.com/sternard/Example-App", directory.path
+            ],
+            ["-C", directory.path, "remote", "get-url", "origin"],
+            ["-C", directory.path, "branch", "--show-current"]
+        ])
+    }
+
     func testRefusesRepositoryWithUnexpectedOrigin() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(
