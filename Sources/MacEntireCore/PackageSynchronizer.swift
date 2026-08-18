@@ -454,6 +454,14 @@ public final class PackageSynchronizer: @unchecked Sendable {
             ["-C", rootDirectory.path, "rev-parse", "HEAD"],
             description: "Read current MacEntire revision"
         )
+        let packageListIndexPath = try gitRunner.run(
+            ["-C", rootDirectory.path, "rev-parse", "--git-path", "index"],
+            description: "Locate MacEntire index"
+        )
+        let packageListIndexURL = URL(
+            fileURLWithPath: packageListIndexPath,
+            relativeTo: rootDirectory
+        ).standardizedFileURL
 
         let fileManager = FileManager.default
         let preservedPackageListLinkDestination = try? fileManager.destinationOfSymbolicLink(
@@ -480,6 +488,8 @@ public final class PackageSynchronizer: @unchecked Sendable {
             )
         )
         let packageListHadStagedChanges = preservedIndexEntry != headIndexEntry
+        var packageListIndexTokenAfterLastUpdate: FileChangeToken?
+        var packageListIndexWasTouchedDuringUpdate = false
         var updateError: Error?
         var updatedRevision = originalRevision
         do {
@@ -490,13 +500,27 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ],
                 description: "Prepare MacEntire update"
             )
+            packageListIndexTokenAfterLastUpdate = try fileChangeToken(
+                at: packageListIndexURL,
+                fileManager: fileManager
+            )
             _ = try gitRunner.run(
                 ["-C", rootDirectory.path, "fetch"],
                 description: "Fetch MacEntire"
             )
+            if let packageListIndexTokenAfterLastUpdate {
+                packageListIndexWasTouchedDuringUpdate = try fileChangeToken(
+                    at: packageListIndexURL,
+                    fileManager: fileManager
+                ) != packageListIndexTokenAfterLastUpdate
+            }
             _ = try gitRunner.run(
                 ["-C", rootDirectory.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
                 description: "Update MacEntire"
+            )
+            packageListIndexTokenAfterLastUpdate = try fileChangeToken(
+                at: packageListIndexURL,
+                fileManager: fileManager
             )
             updatedRevision = try gitRunner.run(
                 ["-C", rootDirectory.path, "rev-parse", "HEAD"],
@@ -511,7 +535,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
         var packageListWasStagedDuringUpdate = false
         do {
             let packageListStatus = try gitRunner.run(
-                ["-C", rootDirectory.path, "status", "--porcelain", "--", packageListPath],
+                [
+                    "--no-optional-locks", "-C", rootDirectory.path,
+                    "status", "--porcelain", "--", packageListPath
+                ],
                 description: "Check for concurrent MacEntire package list edits"
             )
             packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
@@ -520,6 +547,18 @@ public final class PackageSynchronizer: @unchecked Sendable {
             } ?? false
         } catch {
             restorationError = error
+        }
+        if let packageListIndexTokenAfterLastUpdate {
+            do {
+                let currentPackageListIndexToken = try fileChangeToken(
+                    at: packageListIndexURL,
+                    fileManager: fileManager
+                )
+                packageListIndexWasTouchedDuringUpdate = packageListIndexWasTouchedDuringUpdate
+                    || currentPackageListIndexToken != packageListIndexTokenAfterLastUpdate
+            } catch {
+                restorationError = restorationError ?? error
+            }
         }
 
         do {
@@ -545,7 +584,11 @@ public final class PackageSynchronizer: @unchecked Sendable {
             restorationError = error
         }
 
-        if packageListHadStagedChanges && !packageListWasStagedDuringUpdate {
+        if
+            packageListHadStagedChanges,
+            !packageListWasStagedDuringUpdate,
+            !packageListIndexWasTouchedDuringUpdate
+        {
             do {
                 if let preservedIndexEntry {
                     _ = try gitRunner.run(
@@ -716,6 +759,24 @@ public final class PackageSynchronizer: @unchecked Sendable {
 private struct GitFileEntry: Equatable {
     let mode: String
     let objectID: String
+}
+
+private struct FileChangeToken: Equatable {
+    let modificationDate: Date?
+    let size: UInt64?
+    let systemFileNumber: UInt64?
+}
+
+private func fileChangeToken(
+    at url: URL,
+    fileManager: FileManager
+) throws -> FileChangeToken {
+    let attributes = try fileManager.attributesOfItem(atPath: url.path)
+    return FileChangeToken(
+        modificationDate: attributes[.modificationDate] as? Date,
+        size: (attributes[.size] as? NSNumber)?.uint64Value,
+        systemFileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+    )
 }
 
 private func packageListIndexEntry(from output: String) throws -> GitFileEntry? {

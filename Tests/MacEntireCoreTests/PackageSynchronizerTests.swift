@@ -35,6 +35,7 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(git.commands, [
             ["-C", temporaryRoot.path, "rev-parse", "--show-toplevel"],
             ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
+            ["-C", temporaryRoot.path, "rev-parse", "--git-path", "index"],
             ["-C", temporaryRoot.path, "ls-files", "--stage", "--", "Packages/packages.txt"],
             ["-C", temporaryRoot.path, "ls-tree", "HEAD", "--", "Packages/packages.txt"],
             [
@@ -44,7 +45,10 @@ final class PackageSynchronizerTests: XCTestCase {
             ["-C", temporaryRoot.path, "fetch"],
             ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
             ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
-            ["-C", temporaryRoot.path, "status", "--porcelain", "--", "Packages/packages.txt"]
+            [
+                "--no-optional-locks", "-C", temporaryRoot.path,
+                "status", "--porcelain", "--", "Packages/packages.txt"
+            ]
         ])
     }
 
@@ -112,6 +116,33 @@ final class PackageSynchronizerTests: XCTestCase {
             }
         })
         XCTAssertEqual(try String(contentsOf: packageList), "newer staged edit\n")
+    }
+
+    func testMacEntireUpdatePreservesManifestUnstagedDuringUpdate() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let stagedObjectID = String(repeating: "1", count: 40)
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            indexEntryOutput: "100644 \(stagedObjectID) 0\tPackages/packages.txt",
+            headEntryOutput: "100644 blob \(String(repeating: "0", count: 40))\tPackages/packages.txt",
+            packageListEditDuringUpdate: "newer unstaged edit\n",
+            indexTouchedDuringUpdate: true,
+            statusOutput: " M Packages/packages.txt"
+        )
+
+        try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeMacEntire()
+
+        XCTAssertFalse(git.commands.contains { arguments in
+            arguments.contains("update-index") && arguments.contains {
+                $0.contains(stagedObjectID)
+            }
+        })
+        XCTAssertEqual(try String(contentsOf: packageList), "newer unstaged edit\n")
     }
 
     func testMacEntireUpdateDoesNotRequireReinstallationWhenRevisionIsUnchanged() throws {
@@ -924,6 +955,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let updatedRevision: String
     private let packageListEditDuringUpdate: String?
     private let packageListLinkDestinationDuringUpdate: String?
+    private let indexTouchedDuringUpdate: Bool
     private let statusError: PackageSyncError?
     private let statusOutput: String?
     private var didMerge = false
@@ -939,6 +971,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         updatedRevision: String = "new-revision",
         packageListEditDuringUpdate: String? = nil,
         packageListLinkDestinationDuringUpdate: String? = nil,
+        indexTouchedDuringUpdate: Bool = false,
         statusError: PackageSyncError? = nil,
         statusOutput: String? = nil
     ) {
@@ -950,6 +983,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.updatedRevision = updatedRevision
         self.packageListEditDuringUpdate = packageListEditDuringUpdate
         self.packageListLinkDestinationDuringUpdate = packageListLinkDestinationDuringUpdate
+        self.indexTouchedDuringUpdate = indexTouchedDuringUpdate
         self.statusError = statusError
         self.statusOutput = statusOutput
         let unchangedObjectID = String(repeating: "0", count: 40)
@@ -963,6 +997,17 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         commands.append(arguments)
         if arguments.suffix(2) == ["rev-parse", "HEAD"] {
             return didMerge ? updatedRevision : originalRevision
+        }
+        if arguments.suffix(3) == ["rev-parse", "--git-path", "index"] {
+            let indexURL = rootDirectory.appendingPathComponent(".git/index")
+            try FileManager.default.createDirectory(
+                at: indexURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: indexURL.path) {
+                try Data("test index".utf8).write(to: indexURL, options: .atomic)
+            }
+            return indexURL.path
         }
         if arguments.contains("rev-parse") {
             return rootDirectory.path
@@ -979,6 +1024,10 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
                 atomically: true,
                 encoding: .utf8
             )
+        }
+        if arguments.contains("fetch"), indexTouchedDuringUpdate {
+            let indexURL = rootDirectory.appendingPathComponent(".git/index")
+            try Data("test index".utf8).write(to: indexURL, options: .atomic)
         }
         if arguments.contains("merge") {
             try updatedPackageList.write(to: packageListURL, atomically: true, encoding: .utf8)
