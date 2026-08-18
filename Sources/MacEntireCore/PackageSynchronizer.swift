@@ -424,23 +424,31 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
     public func synchronizeAll() throws -> SynchronizationSummary {
         let macEntireErrorMessage: String?
+        let macEntireSyncError: PackageSyncError?
         let macEntireRequiresReinstallation: Bool
         do {
             macEntireRequiresReinstallation = try synchronizeMacEntire()
             macEntireErrorMessage = nil
+            macEntireSyncError = nil
         } catch {
-            macEntireRequiresReinstallation = (error as? PackageSyncError)?.requiresReinstallation ?? false
+            macEntireSyncError = error as? PackageSyncError
+            macEntireRequiresReinstallation = macEntireSyncError?.requiresReinstallation ?? false
             macEntireErrorMessage = error.localizedDescription
         }
 
         let definitions: [PackageDefinition]
         let packageListErrorMessage: String?
-        do {
-            definitions = try workspace.definitions()
-            packageListErrorMessage = nil
-        } catch {
+        if case .packageListRecoveryRequired = macEntireSyncError {
             definitions = []
-            packageListErrorMessage = error.localizedDescription
+            packageListErrorMessage = nil
+        } else {
+            do {
+                definitions = try workspace.definitions()
+                packageListErrorMessage = nil
+            } catch {
+                definitions = []
+                packageListErrorMessage = error.localizedDescription
+            }
         }
 
         let packageResults = definitions.map { package in

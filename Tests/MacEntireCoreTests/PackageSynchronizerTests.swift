@@ -204,6 +204,27 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertTrue(summary.statusMessage.contains("/.git/macentire-recovery/"))
     }
 
+    func testSynchronizeAllSkipsPackagesWhileManifestRecoveryIsPending() throws {
+        let packageList = try writePackageList("https://github.com/sternard/Original-App\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            revisionAfterFetch: "user-commit",
+            packageListEditDuringFetch: "https://github.com/sternard/Replacement-App\n"
+        )
+
+        let summary = try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeAll()
+
+        XCTAssertTrue(summary.macEntireErrorMessage?.contains("Original package-list changes were saved") == true)
+        XCTAssertNil(summary.packageListErrorMessage)
+        XCTAssertTrue(summary.packageResults.isEmpty)
+        XCTAssertFalse(git.commands.contains { $0.first == "clone" })
+    }
+
     func testMacEntireUpdatePreservesIndexEditMadeDuringUpdate() throws {
         let packageList = try writePackageList("custom package list\n")
         let stagedObjectID = String(repeating: "1", count: 40)
