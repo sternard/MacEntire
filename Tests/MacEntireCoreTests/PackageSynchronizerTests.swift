@@ -43,8 +43,27 @@ final class PackageSynchronizerTests: XCTestCase {
             ],
             ["-C", temporaryRoot.path, "fetch"],
             ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
-            ["-C", temporaryRoot.path, "rev-parse", "HEAD"]
+            ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
+            ["-C", temporaryRoot.path, "status", "--porcelain", "--", "Packages/packages.txt"]
         ])
+    }
+
+    func testMacEntireUpdatePreservesManifestEditMadeDuringUpdate() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            packageListEditDuringUpdate: "newer user edit\n"
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        try synchronizer.synchronizeMacEntire()
+
+        XCTAssertEqual(try String(contentsOf: packageList), "newer user edit\n")
     }
 
     func testMacEntireUpdateDoesNotRequireReinstallationWhenRevisionIsUnchanged() throws {
@@ -774,6 +793,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let headEntryOutput: String
     private let originalRevision: String
     private let updatedRevision: String
+    private let packageListEditDuringUpdate: String?
     private var didMerge = false
 
     init(
@@ -784,7 +804,8 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         indexEntryOutput: String? = nil,
         headEntryOutput: String? = nil,
         originalRevision: String = "old-revision",
-        updatedRevision: String = "new-revision"
+        updatedRevision: String = "new-revision",
+        packageListEditDuringUpdate: String? = nil
     ) {
         self.rootDirectory = rootDirectory
         self.packageListURL = packageListURL
@@ -792,6 +813,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.updateError = updateError
         self.originalRevision = originalRevision
         self.updatedRevision = updatedRevision
+        self.packageListEditDuringUpdate = packageListEditDuringUpdate
         let unchangedObjectID = String(repeating: "0", count: 40)
         self.indexEntryOutput = indexEntryOutput
             ?? "100644 \(unchangedObjectID) 0\tPackages/packages.txt"
@@ -823,9 +845,19 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         if arguments.contains("merge") {
             try updatedPackageList.write(to: packageListURL, atomically: true, encoding: .utf8)
             didMerge = true
+            if let packageListEditDuringUpdate {
+                try packageListEditDuringUpdate.write(
+                    to: packageListURL,
+                    atomically: true,
+                    encoding: .utf8
+                )
+            }
             if let updateError {
                 throw updateError
             }
+        }
+        if arguments.contains("status"), packageListEditDuringUpdate != nil {
+            return " M Packages/packages.txt"
         }
         return ""
     }

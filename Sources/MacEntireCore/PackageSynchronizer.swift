@@ -501,6 +501,20 @@ public final class PackageSynchronizer: @unchecked Sendable {
         }
 
         var restorationError: Error?
+        var packageListWasEditedDuringUpdate = false
+        if preservedPackageListLinkDestination == nil {
+            do {
+                let packageListStatus = try gitRunner.run(
+                    ["-C", rootDirectory.path, "status", "--porcelain", "--", packageListPath],
+                    description: "Check for concurrent MacEntire package list edits"
+                )
+                packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
+            } catch {
+                packageListWasEditedDuringUpdate = true
+                restorationError = error
+            }
+        }
+
         do {
             try fileManager.createDirectory(
                 at: workspace.packagesDirectory,
@@ -517,7 +531,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     atPath: workspace.packageListURL.path,
                     withDestinationPath: preservedPackageListLinkDestination
                 )
-            } else {
+            } else if !packageListWasEditedDuringUpdate {
                 try preservedPackageList.write(to: workspace.packageListURL, options: .atomic)
             }
         } catch {
