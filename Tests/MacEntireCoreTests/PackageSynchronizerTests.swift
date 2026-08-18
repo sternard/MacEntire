@@ -1032,6 +1032,67 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(git.commands.contains { $0.contains("merge") })
     }
 
+    func testRefusesMergeAfterManagedCheckoutIsReplacedDuringFetch() throws {
+        let package = try makeInstalledPackage()
+        let movedCheckout = temporaryRoot.appendingPathComponent(
+            "Moved-Example-App",
+            isDirectory: true
+        )
+        let git = FakeGitRunner(statusOutput: "")
+        git.fetchHandler = {
+            try FileManager.default.moveItem(
+                at: package.directoryURL,
+                to: movedCheckout
+            )
+            try FileManager.default.createDirectory(
+                at: package.directoryURL.appendingPathComponent(".git", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronize(package)
+        ) { error in
+            XCTAssertEqual(error as? PackageSyncError, .checkoutChanged("Example-App"))
+        }
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
+    func testRefusesMergeAfterManagedPackagesDirectoryIsReplacedDuringFetch() throws {
+        let package = try makeInstalledPackage()
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let movedPackagesDirectory = temporaryRoot.appendingPathComponent(
+            "Moved-Packages",
+            isDirectory: true
+        )
+        let git = FakeGitRunner(statusOutput: "")
+        git.fetchHandler = {
+            try FileManager.default.moveItem(
+                at: packagesDirectory,
+                to: movedPackagesDirectory
+            )
+            try FileManager.default.createDirectory(
+                at: package.directoryURL.appendingPathComponent(".git", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronize(package)
+        ) { error in
+            XCTAssertEqual(error as? PackageSyncError, .checkoutChanged("Example-App"))
+        }
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
     func testRefusesOriginChangedDuringFetch() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(
@@ -2050,6 +2111,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private let currentBranchOutput: String
     private let currentBranchOutputAfterFetch: String?
     private let statusOutput: String
+    var fetchHandler: (() throws -> Void)? = nil
     private let cloneHandler: (([String]) throws -> Void)?
     private var didFetch = false
 
@@ -2112,6 +2174,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         }
         if arguments.contains("fetch") {
             didFetch = true
+            try fetchHandler?()
         }
         if arguments.first == "clone" {
             try cloneHandler?(arguments)

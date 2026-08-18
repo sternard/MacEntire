@@ -89,6 +89,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case remoteMismatch(expected: String, actual: String)
     case branchMismatch(repository: String, expected: String, actual: String)
     case branchRevisionChanged(String)
+    case checkoutChanged(String)
     case detachedHead(String)
     case gitMetadataOutsideCheckout(String)
     case localChanges(String)
@@ -116,6 +117,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(repository) is on branch \(actual), expected \(expected); update skipped."
         case .branchRevisionChanged(let name):
             return "\(name) branch changed during update; update skipped."
+        case .checkoutChanged(let name):
+            return "\(name) checkout changed during update; update skipped."
         case .detachedHead(let name):
             return "\(name) has a detached HEAD; update skipped."
         case .gitMetadataOutsideCheckout(let name):
@@ -1110,6 +1113,20 @@ public final class PackageSynchronizer: @unchecked Sendable {
             )
             guard revisionAfterFetch == revision else {
                 throw PackageSyncError.branchRevisionChanged(package.repositoryName)
+            }
+            let visibleCheckout = packagesDirectory.url.appendingPathComponent(
+                package.repositoryName,
+                isDirectory: true
+            )
+            guard
+                managedPackagesDirectoryIsCurrent(
+                    packagesDirectory,
+                    at: workspace.packagesDirectory
+                ),
+                !isSymbolicLink(at: visibleCheckout),
+                checkoutDirectory.matches(visibleCheckout)
+            else {
+                throw PackageSyncError.checkoutChanged(package.repositoryName)
             }
             _ = try gitRunner.run(
                 [
