@@ -1114,6 +1114,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
             guard revisionAfterFetch == revision else {
                 throw PackageSyncError.branchRevisionChanged(package.repositoryName)
             }
+            let changesAfterFetch = try gitRunner.run(
+                ["-C", checkoutURL.path, "status", "--porcelain"],
+                description: "Recheck \(package.repositoryName)"
+            )
+            guard changesAfterFetch.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+                throw PackageSyncError.localChanges(package.repositoryName)
+            }
             let visibleCheckout = packagesDirectory.url.appendingPathComponent(
                 package.repositoryName,
                 isDirectory: true

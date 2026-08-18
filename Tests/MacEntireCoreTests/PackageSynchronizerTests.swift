@@ -1032,6 +1032,29 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(git.commands.contains { $0.contains("merge") })
     }
 
+    func testRefusesLocalChangesMadeDuringFetch() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(
+            statusOutput: "",
+            statusOutputAfterFetch: " M Notes.txt"
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronize(package)
+        ) { error in
+            XCTAssertEqual(error as? PackageSyncError, .localChanges("Example-App"))
+        }
+        XCTAssertEqual(
+            git.commands.filter { $0.suffix(2) == ["status", "--porcelain"] }.count,
+            2
+        )
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
     func testRefusesMergeAfterManagedCheckoutIsReplacedDuringFetch() throws {
         let package = try makeInstalledPackage()
         let movedCheckout = temporaryRoot.appendingPathComponent(
@@ -2111,6 +2134,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private let currentBranchOutput: String
     private let currentBranchOutputAfterFetch: String?
     private let statusOutput: String
+    private let statusOutputAfterFetch: String?
     var fetchHandler: (() throws -> Void)? = nil
     private let cloneHandler: (([String]) throws -> Void)?
     private var didFetch = false
@@ -2127,6 +2151,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         currentBranchOutput: String = "main",
         currentBranchOutputAfterFetch: String? = nil,
         statusOutput: String,
+        statusOutputAfterFetch: String? = nil,
         cloneHandler: (([String]) throws -> Void)? = nil
     ) {
         self.effectiveCloneURL = effectiveCloneURL
@@ -2140,6 +2165,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         self.currentBranchOutput = currentBranchOutput
         self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
         self.statusOutput = statusOutput
+        self.statusOutputAfterFetch = statusOutputAfterFetch
         self.cloneHandler = cloneHandler
     }
 
@@ -2170,7 +2196,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
             return didFetch ? currentBranchOutputAfterFetch ?? currentBranchOutput : currentBranchOutput
         }
         if arguments.contains("status") {
-            return statusOutput
+            return didFetch ? statusOutputAfterFetch ?? statusOutput : statusOutput
         }
         if arguments.contains("fetch") {
             didFetch = true
