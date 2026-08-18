@@ -119,22 +119,37 @@ public struct ProcessGitRunner: GitRunning, Sendable {
     }
 
     public func run(_ arguments: [String], description: String) throws -> String {
-        let outputPipe = Pipe()
-        let output = BoundedProcessOutput(maximumBytes: Self.maximumCapturedOutputBytes)
-        let readerFinished = DispatchSemaphore(value: 0)
-        outputPipe.fileHandleForReading.readabilityHandler = { handle in
+        let standardOutputPipe = Pipe()
+        let standardErrorPipe = Pipe()
+        let standardOutput = BoundedProcessOutput(maximumBytes: Self.maximumCapturedOutputBytes)
+        let standardError = BoundedProcessOutput(maximumBytes: Self.maximumCapturedOutputBytes)
+        let standardOutputFinished = DispatchSemaphore(value: 0)
+        let standardErrorFinished = DispatchSemaphore(value: 0)
+        standardOutputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
-                readerFinished.signal()
+                standardOutputFinished.signal()
                 return
             }
-            output.append(data)
+            standardOutput.append(data)
+        }
+        standardErrorPipe.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                standardErrorFinished.signal()
+                return
+            }
+            standardError.append(data)
         }
         defer {
-            outputPipe.fileHandleForReading.readabilityHandler = nil
-            try? outputPipe.fileHandleForReading.close()
-            try? outputPipe.fileHandleForWriting.close()
+            standardOutputPipe.fileHandleForReading.readabilityHandler = nil
+            standardErrorPipe.fileHandleForReading.readabilityHandler = nil
+            try? standardOutputPipe.fileHandleForReading.close()
+            try? standardOutputPipe.fileHandleForWriting.close()
+            try? standardErrorPipe.fileHandleForReading.close()
+            try? standardErrorPipe.fileHandleForWriting.close()
         }
 
         var environment = ProcessInfo.processInfo.environment
@@ -145,12 +160,14 @@ public struct ProcessGitRunner: GitRunning, Sendable {
                 executableURL: executableURL,
                 arguments: arguments,
                 environment: environment,
-                outputPipe: outputPipe
+                standardOutputPipe: standardOutputPipe,
+                standardErrorPipe: standardErrorPipe
             )
         } catch {
             throw PackageSyncError.commandFailed(command: description, output: error.localizedDescription)
         }
-        try? outputPipe.fileHandleForWriting.close()
+        try? standardOutputPipe.fileHandleForWriting.close()
+        try? standardErrorPipe.fileHandleForWriting.close()
 
         guard let waitStatus = waitForProcess(processIdentifier, timeout: max(timeout, 0)) else {
             _ = Darwin.kill(-processIdentifier, SIGTERM)
@@ -162,14 +179,22 @@ public struct ProcessGitRunner: GitRunning, Sendable {
             throw PackageSyncError.commandTimedOut(command: description)
         }
 
-        _ = readerFinished.wait(timeout: .now() + 1)
-        let capturedOutput = output.string
+        _ = standardOutputFinished.wait(timeout: .now() + 1)
+        _ = standardErrorFinished.wait(timeout: .now() + 1)
+        let capturedStandardOutput = standardOutput.string
 
         guard processExitCode(waitStatus) == 0 else {
-            throw PackageSyncError.commandFailed(command: description, output: capturedOutput)
+            throw PackageSyncError.commandFailed(
+                command: description,
+                output: combinedProcessOutput(
+                    standardOutput: capturedStandardOutput,
+                    standardError: standardError.string,
+                    maximumBytes: Self.maximumCapturedOutputBytes
+                )
+            )
         }
 
-        return capturedOutput
+        return capturedStandardOutput
     }
 }
 
@@ -177,7 +202,8 @@ private func spawnProcessGroup(
     executableURL: URL,
     arguments: [String],
     environment: [String: String],
-    outputPipe: Pipe
+    standardOutputPipe: Pipe,
+    standardErrorPipe: Pipe
 ) throws -> pid_t {
     var fileActions: posix_spawn_file_actions_t? = nil
     var attributes: posix_spawnattr_t? = nil
@@ -187,13 +213,17 @@ private func spawnProcessGroup(
     }
     defer { posix_spawn_file_actions_destroy(&fileActions) }
 
-    let outputDescriptor = outputPipe.fileHandleForWriting.fileDescriptor
-    let readDescriptor = outputPipe.fileHandleForReading.fileDescriptor
+    let standardOutputDescriptor = standardOutputPipe.fileHandleForWriting.fileDescriptor
+    let standardOutputReadDescriptor = standardOutputPipe.fileHandleForReading.fileDescriptor
+    let standardErrorDescriptor = standardErrorPipe.fileHandleForWriting.fileDescriptor
+    let standardErrorReadDescriptor = standardErrorPipe.fileHandleForReading.fileDescriptor
     for result in [
-        posix_spawn_file_actions_adddup2(&fileActions, outputDescriptor, STDOUT_FILENO),
-        posix_spawn_file_actions_adddup2(&fileActions, outputDescriptor, STDERR_FILENO),
-        posix_spawn_file_actions_addclose(&fileActions, readDescriptor),
-        posix_spawn_file_actions_addclose(&fileActions, outputDescriptor)
+        posix_spawn_file_actions_adddup2(&fileActions, standardOutputDescriptor, STDOUT_FILENO),
+        posix_spawn_file_actions_adddup2(&fileActions, standardErrorDescriptor, STDERR_FILENO),
+        posix_spawn_file_actions_addclose(&fileActions, standardOutputReadDescriptor),
+        posix_spawn_file_actions_addclose(&fileActions, standardErrorReadDescriptor),
+        posix_spawn_file_actions_addclose(&fileActions, standardOutputDescriptor),
+        posix_spawn_file_actions_addclose(&fileActions, standardErrorDescriptor)
     ] {
         guard result == 0 else {
             throw posixError(result)
@@ -288,6 +318,22 @@ private func posixError(_ code: Int32) -> NSError {
         code: Int(code),
         userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(code))]
     )
+}
+
+private func combinedProcessOutput(
+    standardOutput: String,
+    standardError: String,
+    maximumBytes: Int
+) -> String {
+    let output = [standardOutput, standardError]
+        .filter { !$0.isEmpty }
+        .joined(separator: "\n")
+    let data = Data(output.utf8)
+    guard data.count > maximumBytes else {
+        return output
+    }
+    return String(decoding: data.suffix(maximumBytes), as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
 }
 
 final class BoundedProcessOutput: @unchecked Sendable {

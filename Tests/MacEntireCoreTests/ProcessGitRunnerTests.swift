@@ -77,4 +77,18 @@ final class ProcessGitRunnerTests: XCTestCase {
             ProcessGitRunner.maximumCapturedOutputBytes
         )
     }
+
+    func testSuccessfulCommandReturnsOnlyStandardOutput() throws {
+        let runner = ProcessGitRunner(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            timeout: 2
+        )
+
+        let output = try runner.run(
+            ["-c", "printf 'parsed value'; printf 'diagnostic warning' >&2"],
+            description: "Run diagnostic command"
+        )
+
+        XCTAssertEqual(output, "parsed value")
+    }
 }
