@@ -1096,14 +1096,17 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronize(package)
 
-        XCTAssertEqual(git.commands.count, 3)
-        XCTAssertEqual(git.commands[0].dropLast(), [
+        XCTAssertEqual(git.commands.count, 4)
+        XCTAssertEqual(git.commands[0], [
+            "ls-remote", "--get-url", "https://github.com/sternard/Example-App"
+        ])
+        XCTAssertEqual(git.commands[1].dropLast(), [
             "clone", "--origin", "origin", "--branch", "release/next", "--single-branch",
             "https://github.com/sternard/Example-App"
         ])
-        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
-        XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
+        XCTAssertTrue(try XCTUnwrap(git.commands[1].last).hasPrefix("/.vol/"))
+        XCTAssertEqual(git.commands[2].suffix(3), ["config", "--get-all", "remote.origin.url"])
+        XCTAssertEqual(git.commands[3].suffix(2), ["branch", "--show-current"])
     }
 
     func testFailedCloneRemovesReservedCheckoutSoSynchronizationCanRetry() throws {
@@ -1160,7 +1163,10 @@ final class PackageSynchronizerTests: XCTestCase {
                 gitRunner: retryGit
             ).synchronize(package)
         )
-        XCTAssertEqual(retryGit.commands.first?.first, "clone")
+        XCTAssertEqual(retryGit.commands.first, [
+            "ls-remote", "--get-url", "https://github.com/sternard/Example-App"
+        ])
+        XCTAssertEqual(retryGit.commands.dropFirst().first?.first, "clone")
     }
 
     func testFailedCloneDoesNotDeleteReservedCheckoutAfterItIsMoved() throws {
@@ -1230,6 +1236,7 @@ final class PackageSynchronizerTests: XCTestCase {
             directoryURL: directory
         )
         let git = FakeGitRunner(
+            effectiveCloneURL: "git@github.com:sternard/Example-App.git",
             remoteOutput: "git@github.com:sternard/Example-App.git",
             rawRemoteOutput: "https://github.com/sternard/Example-App",
             statusOutput: ""
@@ -1252,6 +1259,42 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertTrue(git.commands.contains {
             $0.suffix(3) == ["config", "--get-all", "remote.origin.url"]
         })
+        XCTAssertTrue(git.commands.contains {
+            $0.first == "clone" && $0.dropLast().last == "git@github.com:sternard/Example-App.git"
+        })
+    }
+
+    func testRefusesCloneWhenURLRewriteChangesRepositoryIdentity() throws {
+        let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: directory
+        )
+        let git = FakeGitRunner(
+            effectiveCloneURL: "git@github.com:someone-else/Example-App.git",
+            statusOutput: ""
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronize(package)
+        ) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .remoteMismatch(
+                    expected: "https://github.com/sternard/Example-App",
+                    actual: "git@github.com:someone-else/Example-App.git"
+                )
+            )
+        }
+        XCTAssertEqual(git.commands, [[
+            "ls-remote", "--get-url", "https://github.com/sternard/Example-App"
+        ]])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
     func testRefusesCloneWhoseEffectiveOriginDoesNotMatchConfiguration() throws {
@@ -1280,12 +1323,15 @@ final class PackageSynchronizerTests: XCTestCase {
                 )
             )
         }
-        XCTAssertEqual(git.commands.count, 2)
-        XCTAssertEqual(git.commands[0].dropLast(), [
+        XCTAssertEqual(git.commands.count, 3)
+        XCTAssertEqual(git.commands[0], [
+            "ls-remote", "--get-url", "https://github.com/sternard/Example-App"
+        ])
+        XCTAssertEqual(git.commands[1].dropLast(), [
             "clone", "--origin", "origin", "https://github.com/sternard/Example-App"
         ])
-        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
+        XCTAssertTrue(try XCTUnwrap(git.commands[1].last).hasPrefix("/.vol/"))
+        XCTAssertEqual(git.commands[2].suffix(3), ["config", "--get-all", "remote.origin.url"])
     }
 
     func testRefusesConfiguredBranchCloneThatLandsOnDetachedHead() throws {
@@ -1306,14 +1352,17 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
             XCTAssertEqual(error as? PackageSyncError, .detachedHead("Example-App"))
         }
-        XCTAssertEqual(git.commands.count, 3)
-        XCTAssertEqual(git.commands[0].dropLast(), [
+        XCTAssertEqual(git.commands.count, 4)
+        XCTAssertEqual(git.commands[0], [
+            "ls-remote", "--get-url", "https://github.com/sternard/Example-App"
+        ])
+        XCTAssertEqual(git.commands[1].dropLast(), [
             "clone", "--origin", "origin", "--branch", "release", "--single-branch",
             "https://github.com/sternard/Example-App"
         ])
-        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
-        XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
+        XCTAssertTrue(try XCTUnwrap(git.commands[1].last).hasPrefix("/.vol/"))
+        XCTAssertEqual(git.commands[2].suffix(3), ["config", "--get-all", "remote.origin.url"])
+        XCTAssertEqual(git.commands[3].suffix(2), ["branch", "--show-current"])
     }
 
     func testRefusesDefaultBranchCloneThatLandsOnDetachedHead() throws {
@@ -1333,13 +1382,16 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
             XCTAssertEqual(error as? PackageSyncError, .detachedHead("Example-App"))
         }
-        XCTAssertEqual(git.commands.count, 3)
-        XCTAssertEqual(git.commands[0].dropLast(), [
+        XCTAssertEqual(git.commands.count, 4)
+        XCTAssertEqual(git.commands[0], [
+            "ls-remote", "--get-url", "https://github.com/sternard/Example-App"
+        ])
+        XCTAssertEqual(git.commands[1].dropLast(), [
             "clone", "--origin", "origin", "https://github.com/sternard/Example-App"
         ])
-        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
-        XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
+        XCTAssertTrue(try XCTUnwrap(git.commands[1].last).hasPrefix("/.vol/"))
+        XCTAssertEqual(git.commands[2].suffix(3), ["config", "--get-all", "remote.origin.url"])
+        XCTAssertEqual(git.commands[3].suffix(2), ["branch", "--show-current"])
     }
 
     func testRefusesRepositoryWithUnexpectedOrigin() throws {
@@ -1987,6 +2039,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
 
 private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private(set) var commands: [[String]] = []
+    private let effectiveCloneURL: String?
     private let remoteOutput: String
     private let rawRemoteOutput: String?
     private let rawRemoteOutputAfterFetch: String?
@@ -2001,6 +2054,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private var didFetch = false
 
     init(
+        effectiveCloneURL: String? = nil,
         remoteOutput: String = "https://github.com/sternard/Example-App.git",
         rawRemoteOutput: String? = nil,
         rawRemoteOutputAfterFetch: String? = nil,
@@ -2013,6 +2067,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         statusOutput: String,
         cloneHandler: (([String]) throws -> Void)? = nil
     ) {
+        self.effectiveCloneURL = effectiveCloneURL
         self.remoteOutput = remoteOutput
         self.rawRemoteOutput = rawRemoteOutput
         self.rawRemoteOutputAfterFetch = rawRemoteOutputAfterFetch
@@ -2028,6 +2083,9 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
 
     func run(_ arguments: [String], description: String) throws -> String {
         commands.append(arguments)
+        if arguments.prefix(2) == ["ls-remote", "--get-url"] {
+            return effectiveCloneURL ?? arguments.last ?? ""
+        }
         if arguments.suffix(2) == ["rev-parse", "HEAD"] {
             return didFetch ? revisionOutputAfterFetch ?? revisionOutput : revisionOutput
         }

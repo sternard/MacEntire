@@ -1119,6 +1119,23 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 description: "Update \(package.repositoryName)"
             )
         } else {
+            let configuredRemote = package.repositoryURL.absoluteString
+            let effectiveRemoteOutput = try gitRunner.run(
+                ["ls-remote", "--get-url", configuredRemote],
+                description: "Resolve \(package.repositoryName) clone URL"
+            )
+            let effectiveRemote = try singleStoredGitRemote(
+                effectiveRemoteOutput,
+                expected: configuredRemote
+            )
+            guard gitHubRepositoryIdentity(effectiveRemote)
+                == gitHubRepositoryIdentity(configuredRemote) else {
+                throw PackageSyncError.remoteMismatch(
+                    expected: configuredRemote,
+                    actual: redactedGitRemote(effectiveRemote)
+                )
+            }
+
             checkoutDirectory = try reserveManagedCheckout(
                 named: package.repositoryName,
                 in: packagesDirectory
@@ -1128,7 +1145,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 cloneArguments.append(contentsOf: ["--branch", branch, "--single-branch"])
             }
             let cloneDestination = checkoutDirectory.url
-            cloneArguments.append(contentsOf: [package.repositoryURL.absoluteString, cloneDestination.path])
+            cloneArguments.append(contentsOf: [effectiveRemote, cloneDestination.path])
             do {
                 _ = try gitRunner.run(
                     cloneArguments,
@@ -1505,6 +1522,46 @@ func normalizedGitRemote(_ value: String) -> String {
         normalized.removeLast(4)
     }
     return normalized.lowercased()
+}
+
+func gitHubRepositoryIdentity(_ value: String) -> String? {
+    let remote = redactedGitRemote(value)
+    let repositoryPath: String
+
+    if remote.contains("://") {
+        guard
+            let url = URL(string: remote),
+            let scheme = url.scheme?.lowercased(),
+            ["git", "http", "https", "ssh"].contains(scheme),
+            url.host?.lowercased() == "github.com",
+            url.query == nil,
+            url.fragment == nil
+        else {
+            return nil
+        }
+        repositoryPath = url.path
+    } else {
+        let hostAndPath = remote.split(separator: "@", maxSplits: 1).last.map(String.init) ?? remote
+        guard let separator = hostAndPath.firstIndex(of: ":") else {
+            return nil
+        }
+        guard hostAndPath[..<separator].lowercased() == "github.com" else {
+            return nil
+        }
+        repositoryPath = String(hostAndPath[hostAndPath.index(after: separator)...])
+    }
+
+    var components = repositoryPath.split(separator: "/", omittingEmptySubsequences: true)
+    guard components.count == 2 else {
+        return nil
+    }
+    if components[1].lowercased().hasSuffix(".git") {
+        components[1] = components[1].dropLast(4)
+    }
+    guard components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+        return nil
+    }
+    return components.map { $0.lowercased() }.joined(separator: "/")
 }
 
 func redactedGitRemote(_ value: String) -> String {
