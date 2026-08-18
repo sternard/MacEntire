@@ -900,39 +900,36 @@ public final class PackageSynchronizer: @unchecked Sendable {
     }
 
     public func synchronize(_ package: PackageDefinition) throws {
-        guard !isSymbolicLink(at: workspace.packagesDirectory) else {
-            throw PackageSyncError.symbolicLinkPackagesDirectory
-        }
-
-        try FileManager.default.createDirectory(
-            at: workspace.packagesDirectory,
-            withIntermediateDirectories: true
+        let packagesDirectory = try openManagedPackagesDirectory(
+            rootDirectory: workspace.rootDirectory
         )
+        let checkoutDirectory: StableDirectoryHandle
 
-        guard !isSymbolicLink(at: package.directoryURL) else {
-            throw PackageSyncError.symbolicLinkCheckout(package.repositoryName)
-        }
-
-        var isDirectory: ObjCBool = false
-        if FileManager.default.fileExists(atPath: package.directoryURL.path, isDirectory: &isDirectory) {
+        if let existingCheckout = try openManagedCheckout(
+            named: package.repositoryName,
+            in: packagesDirectory
+        ) {
+            checkoutDirectory = existingCheckout
+            let checkoutURL = checkoutDirectory.url
             guard
-                isDirectory.boolValue,
-                FileManager.default.fileExists(atPath: package.directoryURL.appendingPathComponent(".git").path)
+                FileManager.default.fileExists(
+                    atPath: checkoutURL.appendingPathComponent(".git").path
+                )
             else {
                 throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
             }
 
             let resolvedTopLevel = try gitRunner.run(
-                ["-C", package.directoryURL.path, "rev-parse", "--show-toplevel"],
+                ["-C", checkoutURL.path, "rev-parse", "--show-toplevel"],
                 description: "Validate \(package.repositoryName) checkout"
             )
             let resolvedTopLevelURL = URL(fileURLWithPath: resolvedTopLevel, isDirectory: true)
-            guard resolvedCheckoutPath(resolvedTopLevelURL) == resolvedCheckoutPath(package.directoryURL) else {
+            guard checkoutDirectory.matches(resolvedTopLevelURL) else {
                 throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
             }
 
             let remote = try gitRunner.run(
-                ["-C", package.directoryURL.path, "config", "--get", "remote.origin.url"],
+                ["-C", checkoutURL.path, "config", "--get", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
             )
             let verifiedRemote = normalizedGitRemote(remote)
@@ -944,7 +941,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
 
             let changes = try gitRunner.run(
-                ["-C", package.directoryURL.path, "status", "--porcelain"],
+                ["-C", checkoutURL.path, "status", "--porcelain"],
                 description: "Check \(package.repositoryName)"
             )
             guard changes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -952,7 +949,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
 
             let currentBranch = try gitRunner.run(
-                ["-C", package.directoryURL.path, "branch", "--show-current"],
+                ["-C", checkoutURL.path, "branch", "--show-current"],
                 description: "Read \(package.repositoryName) branch"
             )
             guard !currentBranch.isEmpty else {
@@ -971,11 +968,11 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
             let branch = package.branch ?? currentBranch
             _ = try gitRunner.run(
-                ["-C", package.directoryURL.path, "fetch", "origin", "refs/heads/\(branch)"],
+                ["-C", checkoutURL.path, "fetch", "origin", "refs/heads/\(branch)"],
                 description: "Fetch \(package.repositoryName)"
             )
             let remoteAfterFetch = try gitRunner.run(
-                ["-C", package.directoryURL.path, "config", "--get", "remote.origin.url"],
+                ["-C", checkoutURL.path, "config", "--get", "remote.origin.url"],
                 description: "Revalidate \(package.repositoryName) origin"
             )
             guard normalizedGitRemote(remoteAfterFetch) == verifiedRemote else {
@@ -985,7 +982,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 )
             }
             let branchAfterFetch = try gitRunner.run(
-                ["-C", package.directoryURL.path, "branch", "--show-current"],
+                ["-C", checkoutURL.path, "branch", "--show-current"],
                 description: "Revalidate \(package.repositoryName) branch"
             )
             guard !branchAfterFetch.isEmpty else {
@@ -1000,7 +997,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
             _ = try gitRunner.run(
                 [
-                    "-C", package.directoryURL.path,
+                    "-C", checkoutURL.path,
                     "merge", "--ff-only", "--no-overwrite-ignore", "FETCH_HEAD"
                 ],
                 description: "Update \(package.repositoryName)"
@@ -1010,14 +1007,27 @@ public final class PackageSynchronizer: @unchecked Sendable {
             if let branch = package.branch {
                 cloneArguments.append(contentsOf: ["--branch", branch, "--single-branch"])
             }
-            cloneArguments.append(contentsOf: [package.repositoryURL.absoluteString, package.directoryURL.path])
+            let cloneDestination = packagesDirectory.url.appendingPathComponent(
+                package.repositoryName,
+                isDirectory: true
+            )
+            cloneArguments.append(contentsOf: [package.repositoryURL.absoluteString, cloneDestination.path])
             _ = try gitRunner.run(
                 cloneArguments,
                 description: "Clone \(package.repositoryName)"
             )
 
+            guard let clonedCheckout = try openManagedCheckout(
+                named: package.repositoryName,
+                in: packagesDirectory
+            ) else {
+                throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
+            }
+            checkoutDirectory = clonedCheckout
+            let checkoutURL = checkoutDirectory.url
+
             let remote = try gitRunner.run(
-                ["-C", package.directoryURL.path, "config", "--get", "remote.origin.url"],
+                ["-C", checkoutURL.path, "config", "--get", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
             )
             guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
@@ -1028,7 +1038,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
 
             let currentBranch = try gitRunner.run(
-                ["-C", package.directoryURL.path, "branch", "--show-current"],
+                ["-C", checkoutURL.path, "branch", "--show-current"],
                 description: "Read \(package.repositoryName) branch"
             )
             guard !currentBranch.isEmpty else {
@@ -1046,17 +1056,103 @@ public final class PackageSynchronizer: @unchecked Sendable {
             }
         }
 
+        let launcherURL = checkoutDirectory.url.appendingPathComponent("scripts/run-app.sh")
         var launcherIsDirectory: ObjCBool = false
         guard
-            FileManager.default.fileExists(atPath: package.launcherURL.path, isDirectory: &launcherIsDirectory),
+            FileManager.default.fileExists(atPath: launcherURL.path, isDirectory: &launcherIsDirectory),
             !launcherIsDirectory.boolValue
         else {
             throw PackageSyncError.missingLauncher(package.repositoryName)
         }
-        guard FileManager.default.isExecutableFile(atPath: package.launcherURL.path) else {
+        guard FileManager.default.isExecutableFile(atPath: launcherURL.path) else {
             throw PackageSyncError.nonExecutableLauncher(package.repositoryName)
         }
     }
+}
+
+private final class StableDirectoryHandle {
+    let descriptor: Int32
+    let device: dev_t
+    let inode: ino_t
+
+    init(descriptor: Int32) throws {
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else {
+            let error = posixError(errno)
+            close(descriptor)
+            throw error
+        }
+        self.descriptor = descriptor
+        device = metadata.st_dev
+        inode = metadata.st_ino
+    }
+
+    deinit {
+        close(descriptor)
+    }
+
+    var url: URL {
+        URL(fileURLWithPath: "/.vol/\(device)/\(inode)", isDirectory: true)
+    }
+
+    func matches(_ candidateURL: URL) -> Bool {
+        var metadata = stat()
+        guard fstatat(AT_FDCWD, candidateURL.path, &metadata, 0) == 0 else {
+            return false
+        }
+        return metadata.st_dev == device && metadata.st_ino == inode
+    }
+}
+
+private func openManagedPackagesDirectory(rootDirectory: URL) throws -> StableDirectoryHandle {
+    let rootDescriptor = open(rootDirectory.path, O_RDONLY | O_DIRECTORY)
+    guard rootDescriptor >= 0 else {
+        throw posixError(errno)
+    }
+    defer { close(rootDescriptor) }
+
+    if mkdirat(rootDescriptor, "Packages", 0o755) != 0, errno != EEXIST {
+        throw posixError(errno)
+    }
+
+    let descriptor = openat(
+        rootDescriptor,
+        "Packages",
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+    )
+    guard descriptor >= 0 else {
+        if errno == ELOOP || isSymbolicLink(at: rootDirectory.appendingPathComponent("Packages")) {
+            throw PackageSyncError.symbolicLinkPackagesDirectory
+        }
+        throw posixError(errno)
+    }
+    return try StableDirectoryHandle(descriptor: descriptor)
+}
+
+private func openManagedCheckout(
+    named repositoryName: String,
+    in packagesDirectory: StableDirectoryHandle
+) throws -> StableDirectoryHandle? {
+    let descriptor = openat(
+        packagesDirectory.descriptor,
+        repositoryName,
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+    )
+    guard descriptor >= 0 else {
+        if errno == ENOENT {
+            return nil
+        }
+        if errno == ELOOP || isSymbolicLink(
+            at: packagesDirectory.url.appendingPathComponent(repositoryName)
+        ) {
+            throw PackageSyncError.symbolicLinkCheckout(repositoryName)
+        }
+        if errno == ENOTDIR {
+            throw PackageSyncError.destinationIsNotRepository(repositoryName)
+        }
+        throw posixError(errno)
+    }
+    return try StableDirectoryHandle(descriptor: descriptor)
 }
 
 private struct GitFileEntry: Equatable {
