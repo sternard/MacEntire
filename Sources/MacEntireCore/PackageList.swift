@@ -8,7 +8,7 @@ public struct PackageDefinition: Identifiable, Hashable, Sendable {
     public let directoryURL: URL
 
     public var id: String {
-        repositoryURL.absoluteString.lowercased()
+        repositoryName.lowercased()
     }
 
     public var launcherURL: URL {
@@ -48,12 +48,8 @@ public enum PackageListError: LocalizedError, Equatable {
 }
 
 public struct PackageListParser: Sendable {
-    static let packageListFilename = "packages.txt"
-    private static let reservedPackageDirectoryNames: Set<String> = [
-        packageListFilename,
-        ".git",
-        ".gitkeep"
-    ]
+    public static let packageListFilename = "packages.txt"
+    public static let ignoreListFilename = "ignore.txt"
 
     public init() {}
 
@@ -61,11 +57,7 @@ public struct PackageListParser: Sendable {
         var packages: [PackageDefinition] = []
         var directoryNames = Set<String>()
 
-        for (offset, rawLine) in contents.split(
-            maxSplits: .max,
-            omittingEmptySubsequences: false,
-            whereSeparator: \.isNewline
-        ).enumerated() {
+        for (offset, rawLine) in contents.components(separatedBy: .newlines).enumerated() {
             let lineNumber = offset + 1
             let line = rawLine.trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -80,13 +72,16 @@ public struct PackageListParser: Sendable {
                 throw PackageListError.invalidEntry(line: lineNumber, value: line)
             }
 
-            let normalizedDirectoryName = parsed.repositoryName.lowercased()
-            guard !Self.reservedPackageDirectoryNames.contains(normalizedDirectoryName) else {
+            let directoryName = parsed.repositoryName.lowercased()
+            guard directoryName != Self.packageListFilename,
+                  directoryName != Self.ignoreListFilename else {
                 throw PackageListError.invalidEntry(line: lineNumber, value: line)
             }
-
-            guard directoryNames.insert(normalizedDirectoryName).inserted else {
-                throw PackageListError.duplicateDirectory(line: lineNumber, name: parsed.repositoryName)
+            guard directoryNames.insert(directoryName).inserted else {
+                throw PackageListError.duplicateDirectory(
+                    line: lineNumber,
+                    name: parsed.repositoryName
+                )
             }
 
             packages.append(PackageDefinition(
@@ -94,7 +89,10 @@ public struct PackageListParser: Sendable {
                 repositoryName: parsed.repositoryName,
                 displayName: humanized(parsed.repositoryName),
                 branch: entry.branch,
-                directoryURL: packagesDirectory.appendingPathComponent(parsed.repositoryName, isDirectory: true)
+                directoryURL: packagesDirectory.appendingPathComponent(
+                    parsed.repositoryName,
+                    isDirectory: true
+                )
             ))
         }
 
@@ -129,24 +127,15 @@ public struct PackageListParser: Sendable {
         guard !repository.isEmpty else {
             return nil
         }
-
-        if optionTokens.isEmpty {
+        guard !optionTokens.isEmpty else {
             return (repository, nil)
         }
-
-        guard
-            optionTokens.count == 2,
-            optionTokens[0] == "-b"
-        else {
+        guard optionTokens.count == 2, optionTokens[0] == "-b" else {
             return nil
         }
 
         let branch = String(optionTokens[1])
-        guard isValidBranchName(branch) else {
-            return nil
-        }
-
-        return (repository, branch)
+        return isValidBranchName(branch) ? (repository, branch) : nil
     }
 
     private func isValidBranchName(_ branch: String) -> Bool {
@@ -157,18 +146,19 @@ public struct PackageListParser: Sendable {
             && branch != "@"
             && branch != "HEAD"
             && !branch.hasPrefix("-")
-            && !branch.hasPrefix("refs/")
             && !branch.hasSuffix(".")
             && !branch.contains("..")
             && !branch.contains("@{")
             && branch.rangeOfCharacter(from: forbiddenCharacters) == nil
             && branch.unicodeScalars.allSatisfy { $0.value >= 0x20 && $0.value != 0x7f }
-            && components.allSatisfy { !$0.isEmpty && !$0.hasPrefix(".") && !$0.hasSuffix(".lock") }
+            && components.allSatisfy {
+                !$0.isEmpty && !$0.hasPrefix(".") && !$0.hasSuffix(".lock")
+            }
     }
 
     private func parseGitHubURL(_ value: String) -> (url: URL, repositoryName: String)? {
         guard
-            let components = URLComponents(string: value),
+            var components = URLComponents(string: value),
             components.scheme?.lowercased() == "https",
             components.host?.lowercased() == "github.com",
             components.user == nil,
@@ -180,17 +170,12 @@ public struct PackageListParser: Sendable {
             return nil
         }
 
-        let pathComponents = components.path.split(separator: "/", omittingEmptySubsequences: true)
-        guard pathComponents.count == 2 else {
-            return nil
-        }
-
-        let ownerName = String(pathComponents[0])
-        guard
-            ownerName != ".",
-            ownerName != "..",
-            ownerName.rangeOfCharacter(from: .controlCharacters) == nil
-        else {
+        let pathComponents = components.path.split(
+            separator: "/",
+            omittingEmptySubsequences: true
+        )
+        guard pathComponents.count == 2,
+              pathComponents.allSatisfy({ $0 != "." && $0 != ".." }) else {
             return nil
         }
 
@@ -198,25 +183,17 @@ public struct PackageListParser: Sendable {
         if repositoryName.lowercased().hasSuffix(".git") {
             repositoryName.removeLast(4)
         }
-
-        guard
-            !repositoryName.isEmpty,
-            repositoryName != ".",
-            repositoryName != "..",
-            repositoryName.rangeOfCharacter(from: .controlCharacters) == nil
-        else {
+        guard !repositoryName.isEmpty else {
             return nil
         }
 
-        var canonical = components
-        canonical.scheme = "https"
-        canonical.host = "github.com"
-        canonical.path = "/\(ownerName)/\(repositoryName)"
+        components.scheme = "https"
+        components.host = "github.com"
+        components.path = "/\(pathComponents[0])/\(repositoryName)"
 
-        guard let url = canonical.url else {
+        guard let url = components.url else {
             return nil
         }
-
         return (url, repositoryName)
     }
 

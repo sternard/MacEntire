@@ -8,19 +8,11 @@ let package = Package(
         .macOS(.v13)
     ],
     products: [
-        .library(
-            name: "MacEntireCore",
-            targets: ["MacEntireCore"]
-        ),
-        .executable(
-            name: "MacEntireApp",
-            targets: ["MacEntireApp"]
-        )
+        .library(name: "MacEntireCore", targets: ["MacEntireCore"]),
+        .executable(name: "MacEntireApp", targets: ["MacEntireApp"])
     ],
     targets: [
-        .target(
-            name: "MacEntireCore"
-        ),
+        .target(name: "MacEntireCore"),
         .executableTarget(
             name: "MacEntireApp",
             dependencies: ["MacEntireCore"]
@@ -28,10 +20,6 @@ let package = Package(
         .testTarget(
             name: "MacEntireCoreTests",
             dependencies: ["MacEntireCore"]
-        ),
-        .testTarget(
-            name: "MacEntireAppTests",
-            dependencies: ["MacEntireApp"]
         )
     ]
 )

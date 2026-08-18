@@ -1,47 +1,55 @@
 # MacEntire
 
-MacEntire is a deliberately small macOS menu bar launcher for a fixed collection of local Assistant apps.
+MacEntire is a deliberately small macOS menu bar launcher for a fixed collection of local apps.
 
-Unlike Mac Assistant, it does not scan the computer for repositories. The supported repositories are declared in [`Packages/packages.txt`](Packages/packages.txt), and every managed checkout lives beside it in `Packages/`.
+The shared package catalog lives in [`Packages/packages.txt`](Packages/packages.txt). Managed repositories are cloned into the same `Packages/` directory and remain independent Git checkouts.
 
-## How it works
+## How synchronization works
 
-Open the menu bar item and choose **Sync Packages**. MacEntire will:
+Choose **Sync Packages** from the menu bar. MacEntire will:
 
-1. Fast-forward its own Git checkout while preserving the local contents of `Packages/packages.txt`.
-2. Clone missing repositories into `Packages/<repository-name>`.
-3. Fetch the checked-out or configured branch from the verified `origin`, then fast-forward it.
-4. Refuse to update a checkout with local changes, an unexpected `origin` remote, the wrong configured branch, or an update that would overwrite an ignored file.
-5. Show apps containing `scripts/run-app.sh` as launchable menu items.
+1. Update its own clean checkout from the current branch on `origin` using a fast-forward-only merge.
+2. Re-read the updated `Packages/packages.txt`.
+3. Exclude repositories listed in the local `Packages/ignore.txt`.
+4. Clone missing repositories and fast-forward existing clean checkouts.
 
-MacEntire never searches other folders, deletes package files, resets branches, or overwrites local changes, including ignored files.
+MacEntire refuses to update a checkout with local changes, an unexpected `origin`, a detached HEAD, the wrong configured branch, or an update that would overwrite an ignored file. If the MacEntire checkout itself has local changes, its self-update is skipped but package synchronization continues using the current catalog.
 
-## Package list
+When MacEntire's source changes, the currently running app continues the synchronization and displays a reminder to rerun the installer. A newly fetched package catalog is used immediately without restarting.
 
-Add one GitHub repository per line to `Packages/packages.txt`. Private repositories work when the current user has Git access:
+## Package catalog
+
+Add one GitHub repository per line to `Packages/packages.txt`:
 
 ```text
 https://github.com/sternard/Storage-Assistant
 https://github.com/sternard/HEIC-to-JPEG -b develop
 ```
 
-Markdown links are also accepted, so this is equivalent:
+Markdown links are also accepted:
 
 ```text
 [Storage Assistant](https://github.com/sternard/Storage-Assistant)
 ```
 
-Append `-b branch-name` to clone and track a specific branch. The suffix also works after a Markdown link:
+Append `-b branch-name` to clone and track a specific branch. Existing checkouts must already be on the configured branch; MacEntire reports a mismatch instead of switching branches automatically.
+
+Blank lines and lines beginning with `#` or `//` are ignored.
+
+## Per-computer exclusions
+
+`Packages/packages.txt` is the shared upstream catalog and should stay unchanged on individual computers. To skip a package on one computer, add the same repository URL to `Packages/ignore.txt`:
 
 ```text
-[Storage Assistant](https://github.com/sternard/Storage-Assistant) -b feature/new-ui
+// Packages/ignore.txt
+https://github.com/sternard/Screen-Swap
 ```
 
-When a branch is configured, MacEntire clones only that branch. An existing checkout must already be on the configured branch; MacEntire will report a mismatch instead of switching branches automatically.
+`ignore.txt` accepts the same raw URLs, Markdown links, comments, and optional branch suffixes as `packages.txt`. It is ignored by Git, so MacEntire can update the shared catalog without changing local exclusions.
 
-Blank lines and lines beginning with `#` or `//` are ignored. Repository folders inside `Packages/` remain independent Git repositories and are ignored by MacEntire itself.
+Ignoring a package prevents it from appearing or synchronizing. An existing checkout is left untouched and can be restored by removing its entry from `ignore.txt`.
 
-Each managed app must provide:
+Each active package must provide:
 
 ```text
 scripts/run-app.sh
@@ -53,8 +61,6 @@ scripts/run-app.sh
 ./scripts/run-app.sh
 ```
 
-The script builds a local `.app` bundle and opens MacEntire as a menu bar app. It does not add a Dock icon.
-
 Set `MACENTIRE_SKIP_OPEN=1` to build and validate the app bundle without opening it.
 
 ## Install
@@ -64,8 +70,6 @@ Set `MACENTIRE_SKIP_OPEN=1` to build and validate the app bundle without opening
 ```
 
 This installs and opens `~/Applications/MacEntire.app`. Use **Start on Login** in the MacEntire menu to control whether macOS opens it when you sign in.
-
-The installed app continues to manage the `Packages/` directory beside this source checkout, so rerun the installer after moving the MacEntire repository.
 
 ## Tests
 
