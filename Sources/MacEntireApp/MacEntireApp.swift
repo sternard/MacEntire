@@ -235,7 +235,10 @@ private final class PackageCatalog: ObservableObject {
                 statusMessage = refreshedPackageCatalogStatusMessage(
                     currentMessage: statusMessage,
                     packagesAreEmpty: packages.isEmpty,
-                    currentMessageIsInspectionError: statusMessageIsInspectionError
+                    currentMessageIsInspectionError: statusMessageIsInspectionError,
+                    fallbackMessage: pendingReinstallationStore.statusMessage(
+                        for: workspace.rootDirectory
+                    )
                 )
                 statusMessageIsInspectionError = false
             } catch {

@@ -68,6 +68,18 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testSuccessfulRefreshRestoresFallbackAfterInspectionError() {
+        XCTAssertEqual(
+            refreshedPackageCatalogStatusMessage(
+                currentMessage: "Could not read the package list",
+                packagesAreEmpty: false,
+                currentMessageIsInspectionError: true,
+                fallbackMessage: PendingReinstallationStore.statusMessage
+            ),
+            PendingReinstallationStore.statusMessage
+        )
+    }
+
     func testSuccessfulRefreshPreservesOperationStatus() {
         XCTAssertEqual(
             refreshedPackageCatalogStatusMessage(
