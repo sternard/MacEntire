@@ -36,6 +36,23 @@ final class PackageLauncherTests: XCTestCase {
         )
     }
 
+    func testFailedLaunchCompletionLimitsDiagnosticForMenuDisplay() throws {
+        let messagePrefix = "Example App launcher exited with status 7: "
+        let error = PackageLaunchError.unsuccessfulExit(
+            package: "Example App",
+            status: 7,
+            output: "first line\nsecond\t\(String(repeating: "x", count: 300))"
+        )
+
+        let message = try XCTUnwrap(packageLaunchCompletionMessage(for: .failure(error)))
+        XCTAssertTrue(message.hasPrefix(messagePrefix))
+        let diagnostic = message.dropFirst(messagePrefix.count)
+        XCTAssertEqual(diagnostic.count, PackageLaunchError.maximumDisplayedOutputCharacters)
+        XCTAssertFalse(diagnostic.contains(where: \.isNewline))
+        XCTAssertFalse(diagnostic.contains("\t"))
+        XCTAssertTrue(diagnostic.hasSuffix("…"))
+    }
+
     func testSuccessfulCompletionPreservesAnotherActiveLaunchStatus() {
         let firstIdentifier = UUID()
         let secondIdentifier = UUID()

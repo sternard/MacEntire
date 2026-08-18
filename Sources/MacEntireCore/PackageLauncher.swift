@@ -2,16 +2,29 @@ import Darwin
 import Foundation
 
 public enum PackageLaunchError: LocalizedError, Equatable, Sendable {
+    static let maximumDisplayedOutputCharacters = 200
+
     case unsuccessfulExit(package: String, status: Int32, output: String)
 
     public var errorDescription: String? {
         switch self {
         case .unsuccessfulExit(let package, let status, let output):
-            if output.isEmpty {
+            let summary = Self.displayedOutputSummary(output)
+            if summary.isEmpty {
                 return "\(package) launcher exited with status \(status)."
             }
-            return "\(package) launcher exited with status \(status): \(output)"
+            return "\(package) launcher exited with status \(status): \(summary)"
         }
+    }
+
+    private static func displayedOutputSummary(_ output: String) -> String {
+        let singleLine = output
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        guard singleLine.count > maximumDisplayedOutputCharacters else {
+            return singleLine
+        }
+        return String(singleLine.prefix(maximumDisplayedOutputCharacters - 1)) + "…"
     }
 }
 
