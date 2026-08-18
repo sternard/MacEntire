@@ -186,7 +186,11 @@ public struct PackageListParser: Sendable {
         }
 
         let ownerName = String(pathComponents[0])
-        guard ownerName != ".", ownerName != ".." else {
+        guard
+            ownerName != ".",
+            ownerName != "..",
+            ownerName.rangeOfCharacter(from: .controlCharacters) == nil
+        else {
             return nil
         }
 
@@ -195,7 +199,12 @@ public struct PackageListParser: Sendable {
             repositoryName.removeLast(4)
         }
 
-        guard !repositoryName.isEmpty, repositoryName != ".", repositoryName != ".." else {
+        guard
+            !repositoryName.isEmpty,
+            repositoryName != ".",
+            repositoryName != "..",
+            repositoryName.rangeOfCharacter(from: .controlCharacters) == nil
+        else {
             return nil
         }
 
