@@ -94,6 +94,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case nonExecutableLauncher(String)
     case macEntireIsNotRepository
     case macEntireCheckoutChanged
+    case macEntireUpdateFailedAfterMerge(String)
     case packageListRecoveryRequired(reason: String, location: String)
     case packageListRestorationFailed(String, requiresReinstallation: Bool)
     case commandFailed(command: String, output: String)
@@ -123,6 +124,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "The configured MacEntire root is not the root of a Git repository."
         case .macEntireCheckoutChanged:
             return "The configured MacEntire root changed during the update; update skipped."
+        case .macEntireUpdateFailedAfterMerge(let reason):
+            return reason
         case .packageListRecoveryRequired(let reason, let location):
             return "\(reason) Original package-list changes were saved to \(location)."
         case .packageListRestorationFailed(let detail, _):
@@ -148,6 +151,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
 
     var requiresReinstallation: Bool {
         switch self {
+        case .macEntireUpdateFailedAfterMerge:
+            return true
         case .packageListRestorationFailed(_, let requiresReinstallation):
             return requiresReinstallation
         default:
@@ -633,6 +638,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         var preservePostFetchCheckoutState = false
         var updateError: Error?
         var updatedRevision = originalRevision
+        var updateRequiresReinstallation = false
         do {
             _ = try gitRunner.run(
                 [
@@ -698,10 +704,12 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ],
                 description: "Update MacEntire"
             )
+            updateRequiresReinstallation = true
             updatedRevision = try gitRunner.run(
                 ["-C", checkoutURL.path, "rev-parse", "HEAD"],
                 description: "Read updated MacEntire revision"
             )
+            updateRequiresReinstallation = updatedRevision != originalRevision
         } catch {
             updateError = error
         }
@@ -838,7 +846,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             throw PackageSyncError.packageListRestorationFailed(
                 "\(restorationError.localizedDescription) Original state was saved to "
                     + "\(packageListRecovery.directoryURL.path).",
-                requiresReinstallation: updatedRevision != originalRevision
+                requiresReinstallation: updateRequiresReinstallation
             )
         }
 
@@ -849,10 +857,15 @@ public final class PackageSynchronizer: @unchecked Sendable {
         )
 
         if let updateError {
+            if updateRequiresReinstallation {
+                throw PackageSyncError.macEntireUpdateFailedAfterMerge(
+                    updateError.localizedDescription
+                )
+            }
             throw updateError
         }
 
-        return updatedRevision != originalRevision
+        return updateRequiresReinstallation
     }
 
     private func createPackageListRecovery(

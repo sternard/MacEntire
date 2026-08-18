@@ -374,6 +374,32 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertTrue(summary.statusMessage.contains("/.git/macentire-recovery/"))
     }
 
+    func testSynchronizeAllPreservesReinstallStateWhenUpdatedRevisionReadFails() throws {
+        let packageList = try writePackageList("")
+        let readError = PackageSyncError.commandFailed(
+            command: "Read updated MacEntire revision",
+            output: "process failed"
+        )
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "",
+            updatedRevisionError: readError
+        )
+
+        let summary = try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeAll()
+
+        XCTAssertTrue(summary.macEntireRequiresReinstallation)
+        XCTAssertEqual(summary.macEntireErrorMessage, readError.localizedDescription)
+        XCTAssertEqual(
+            summary.statusMessage,
+            "MacEntire updated — reinstall required; \(readError.localizedDescription)"
+        )
+    }
+
     func testSynchronizeAllSkipsPackagesWhenManifestRestorationFails() throws {
         let packageList = try writePackageList("https://github.com/sternard/Original-App\n")
         let git = MacEntireUpdateGitRunner(
@@ -1662,6 +1688,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let originalRevision: String
     private let revisionAfterFetch: String?
     private let updatedRevision: String
+    private let updatedRevisionError: PackageSyncError?
     private let currentBranchOutput: String
     private let currentBranchOutputAfterFetch: String?
     private let packageListEditDuringFetch: String?
@@ -1688,6 +1715,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         originalRevision: String = "old-revision",
         revisionAfterFetch: String? = nil,
         updatedRevision: String = "new-revision",
+        updatedRevisionError: PackageSyncError? = nil,
         currentBranchOutput: String = "main",
         currentBranchOutputAfterFetch: String? = nil,
         packageListEditDuringFetch: String? = nil,
@@ -1708,6 +1736,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.originalRevision = originalRevision
         self.revisionAfterFetch = revisionAfterFetch
         self.updatedRevision = updatedRevision
+        self.updatedRevisionError = updatedRevisionError
         self.currentBranchOutput = currentBranchOutput
         self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
         self.packageListEditDuringFetch = packageListEditDuringFetch
@@ -1730,6 +1759,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         commands.append(arguments)
         if arguments.suffix(2) == ["rev-parse", "HEAD"] {
             if didMerge {
+                if let updatedRevisionError {
+                    throw updatedRevisionError
+                }
                 return updatedRevision
             }
             return didFetch ? revisionAfterFetch ?? originalRevision : originalRevision
