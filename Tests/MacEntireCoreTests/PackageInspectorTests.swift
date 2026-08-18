@@ -125,6 +125,57 @@ final class PackageInspectorTests: XCTestCase {
         _ = try await forcedInspection.value
         XCTAssertEqual(gitRunner.topLevelCallCount, 2)
     }
+
+    func testRegularInspectionJoinsQueuedForcedInspection() async throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireInspectorTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let repository = packagesDirectory.appendingPathComponent("Example-App", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try "https://github.com/sternard/Example-App\n".write(
+            to: packagesDirectory.appendingPathComponent("packages.txt", isDirectory: false),
+            atomically: true,
+            encoding: .utf8
+        )
+        try "#!/usr/bin/env bash\n".write(
+            to: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false),
+            atomically: true,
+            encoding: .utf8
+        )
+        let gitRunner = BlockingInspectionGitRunner(firstTopLevelResult: temporaryRoot.path)
+        let inspector = PackageInspector(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: gitRunner
+        )
+
+        let firstInspection = Task { try await inspector.packages() }
+        XCTAssertEqual(gitRunner.firstInspectionStarted.wait(timeout: .now() + 1), .success)
+        let forcedInspection = Task { try await inspector.packages(forceRefresh: true) }
+        try await Task.sleep(for: .milliseconds(100))
+        let regularInspection = Task { try await inspector.packages() }
+
+        gitRunner.allowInspectionToFinish.signal()
+        let stalePackages = try await firstInspection.value
+        let forcedPackages = try await forcedInspection.value
+        let regularPackages = try await regularInspection.value
+
+        XCTAssertEqual(
+            stalePackages.first?.state,
+            .unavailable("Example-App already exists but is not a Git repository.")
+        )
+        XCTAssertEqual(forcedPackages.first?.state, .ready)
+        XCTAssertEqual(regularPackages, forcedPackages)
+        XCTAssertEqual(gitRunner.topLevelCallCount, 2)
+    }
 }
 
 private final class InspectionGitRunner: GitRunning, @unchecked Sendable {
@@ -154,7 +205,12 @@ private final class BlockingInspectionGitRunner: GitRunning, @unchecked Sendable
     let allowInspectionToFinish = DispatchSemaphore(value: 0)
 
     private let lock = NSLock()
+    private let firstTopLevelResult: String?
     private var topLevelCalls = 0
+
+    init(firstTopLevelResult: String? = nil) {
+        self.firstTopLevelResult = firstTopLevelResult
+    }
 
     var topLevelCallCount: Int {
         lock.lock()
@@ -172,7 +228,7 @@ private final class BlockingInspectionGitRunner: GitRunning, @unchecked Sendable
                 firstInspectionStarted.signal()
                 allowInspectionToFinish.wait()
             }
-            return arguments[1]
+            return isFirstCall ? (firstTopLevelResult ?? arguments[1]) : arguments[1]
         }
         return "https://github.com/sternard/Example-App.git"
     }
