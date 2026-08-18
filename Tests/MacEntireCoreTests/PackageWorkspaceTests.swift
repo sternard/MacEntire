@@ -126,7 +126,23 @@ final class PackageWorkspaceTests: XCTestCase {
 
         XCTAssertFalse(termination.requestTermination())
         XCTAssertTrue(termination.isTerminationDeferred)
-        XCTAssertTrue(termination.endSynchronization())
+        XCTAssertEqual(
+            termination.endSynchronization(),
+            .completeDeferredTermination
+        )
+        XCTAssertFalse(termination.isTerminationDeferred)
+        XCTAssertFalse(termination.isSynchronizationInProgress)
+    }
+
+    func testDeferredTerminationCanBeCancelledWhenUpdateStateCannotBePersisted() {
+        var termination = ApplicationTerminationState()
+        termination.beginSynchronization()
+        XCTAssertFalse(termination.requestTermination())
+
+        XCTAssertEqual(
+            termination.endSynchronization(allowDeferredTermination: false),
+            .cancelDeferredTermination
+        )
         XCTAssertFalse(termination.isTerminationDeferred)
         XCTAssertFalse(termination.isSynchronizationInProgress)
     }
@@ -136,6 +152,34 @@ final class PackageWorkspaceTests: XCTestCase {
 
         XCTAssertTrue(termination.requestTermination())
         XCTAssertFalse(termination.isTerminationDeferred)
+    }
+
+    func testPendingReinstallationReminderSurvivesDeferredTerminationCompletion() throws {
+        let markerURL = temporaryRoot.appendingPathComponent("state/reinstall-required")
+        let store = PendingReinstallationStore(markerURL: markerURL)
+        let rootDirectory = temporaryRoot.appendingPathComponent("Checkout", isDirectory: true)
+        var termination = ApplicationTerminationState()
+        termination.beginSynchronization()
+        XCTAssertFalse(termination.requestTermination())
+
+        try store.markRequired(for: rootDirectory)
+        XCTAssertEqual(
+            termination.endSynchronization(),
+            .completeDeferredTermination
+        )
+
+        let relaunchedStore = PendingReinstallationStore(markerURL: markerURL)
+        XCTAssertEqual(
+            relaunchedStore.statusMessage(for: rootDirectory),
+            PendingReinstallationStore.statusMessage
+        )
+        XCTAssertNil(
+            relaunchedStore.statusMessage(
+                for: temporaryRoot.appendingPathComponent("DifferentCheckout", isDirectory: true)
+            )
+        )
+        try relaunchedStore.clear()
+        XCTAssertNil(relaunchedStore.statusMessage(for: rootDirectory))
     }
 
     func testUnavailablePackageDisplayTitleIncludesReason() {

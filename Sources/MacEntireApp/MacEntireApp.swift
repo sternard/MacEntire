@@ -23,9 +23,14 @@ private final class ApplicationTerminationCoordinator {
         state.beginSynchronization()
     }
 
-    func endSynchronization() {
-        if state.endSynchronization() {
+    func endSynchronization(allowDeferredTermination: Bool) {
+        switch state.endSynchronization(allowDeferredTermination: allowDeferredTermination) {
+        case .noDeferredTermination:
+            break
+        case .completeDeferredTermination:
             NSApp.reply(toApplicationShouldTerminate: true)
+        case .cancelDeferredTermination:
+            NSApp.reply(toApplicationShouldTerminate: false)
         }
     }
 
@@ -192,6 +197,7 @@ private final class PackageCatalog: ObservableObject {
     private let inspector: PackageInspector
     private let synchronizer: PackageSynchronizer
     private let terminationCoordinator: ApplicationTerminationCoordinator
+    private let pendingReinstallationStore: PendingReinstallationStore
     private let launcher = PackageLauncher()
     private var launchStatusState = PackageLaunchStatusState()
     private var refreshGeneration = 0
@@ -199,13 +205,16 @@ private final class PackageCatalog: ObservableObject {
 
     init(
         rootDirectory: URL = WorkspaceRoot.resolve(),
-        terminationCoordinator: ApplicationTerminationCoordinator? = nil
+        terminationCoordinator: ApplicationTerminationCoordinator? = nil,
+        pendingReinstallationStore: PendingReinstallationStore = PendingReinstallationStore()
     ) {
         let workspace = PackageWorkspace(rootDirectory: rootDirectory)
         self.workspace = workspace
         self.inspector = PackageInspector(workspace: workspace)
         self.synchronizer = PackageSynchronizer(workspace: workspace)
         self.terminationCoordinator = terminationCoordinator ?? .shared
+        self.pendingReinstallationStore = pendingReinstallationStore
+        self.statusMessage = pendingReinstallationStore.statusMessage(for: workspace.rootDirectory)
         refresh()
     }
 
@@ -254,14 +263,36 @@ private final class PackageCatalog: ObservableObject {
                 Result { try synchronizer.synchronizeAll() }
             }.value
 
-            operationState.endSynchronization()
-            terminationCoordinator.endSynchronization()
+            var allowDeferredTermination = true
             switch result {
             case .success(let summary):
-                publishOperationStatus(summary.statusMessage)
+                if summary.macEntireRequiresReinstallation {
+                    do {
+                        try pendingReinstallationStore.markRequired(for: workspace.rootDirectory)
+                        publishOperationStatus(summary.statusMessage)
+                    } catch {
+                        allowDeferredTermination = false
+                        publishOperationStatus(
+                            "\(summary.statusMessage); could not save the reinstall reminder, so MacEntire will stay open: "
+                                + error.localizedDescription
+                        )
+                    }
+                } else {
+                    if let pendingMessage = pendingReinstallationStore.statusMessage(
+                        for: workspace.rootDirectory
+                    ) {
+                        publishOperationStatus("\(pendingMessage); \(summary.statusMessage)")
+                    } else {
+                        publishOperationStatus(summary.statusMessage)
+                    }
+                }
             case .failure(let error):
                 publishOperationStatus(error.localizedDescription)
             }
+            operationState.endSynchronization()
+            terminationCoordinator.endSynchronization(
+                allowDeferredTermination: allowDeferredTermination
+            )
             refresh(forceInspection: true)
         }
     }

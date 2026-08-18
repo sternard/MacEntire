@@ -51,6 +51,12 @@ public struct PackageOperationState: Equatable, Sendable {
     }
 }
 
+public enum ApplicationTerminationResolution: Equatable, Sendable {
+    case noDeferredTermination
+    case completeDeferredTermination
+    case cancelDeferredTermination
+}
+
 public struct ApplicationTerminationState: Equatable, Sendable {
     public private(set) var isSynchronizationInProgress = false
     public private(set) var isTerminationDeferred = false
@@ -69,11 +75,17 @@ public struct ApplicationTerminationState: Equatable, Sendable {
         return false
     }
 
-    public mutating func endSynchronization() -> Bool {
+    public mutating func endSynchronization(
+        allowDeferredTermination: Bool = true
+    ) -> ApplicationTerminationResolution {
         isSynchronizationInProgress = false
-        let shouldCompleteDeferredTermination = isTerminationDeferred
+        guard isTerminationDeferred else {
+            return .noDeferredTermination
+        }
         isTerminationDeferred = false
-        return shouldCompleteDeferredTermination
+        return allowDeferredTermination
+            ? .completeDeferredTermination
+            : .cancelDeferredTermination
     }
 }
 

@@ -64,6 +64,9 @@ cp -R "$STAGED_APP_BUNDLE" "$APP_BUNDLE"
 
 plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null
 
+REINSTALL_MARKER="$HOME/Library/Application Support/MacEntire/reinstall-required"
+rm -f "$REINSTALL_MARKER"
+
 echo "Installed $APP_BUNDLE"
 echo "Use Start on Login in the MacEntire menu to control login startup."
 open "$APP_BUNDLE"
