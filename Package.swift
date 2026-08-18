@@ -28,6 +28,10 @@ let package = Package(
         .testTarget(
             name: "MacEntireCoreTests",
             dependencies: ["MacEntireCore"]
+        ),
+        .testTarget(
+            name: "MacEntireAppTests",
+            dependencies: ["MacEntireApp"]
         )
     ]
 )

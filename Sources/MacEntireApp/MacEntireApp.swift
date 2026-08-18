@@ -354,14 +354,14 @@ private final class PackageCatalog: ObservableObject {
     }
 }
 
-private enum WorkspaceRoot {
+enum WorkspaceRoot {
     static func resolve(
         bundle: Bundle = .main,
         environment: [String: String] = ProcessInfo.processInfo.environment,
         currentDirectory: URL = URL(fileURLWithPath: FileManager.default.currentDirectoryPath, isDirectory: true)
     ) -> URL {
-        if let configured = environment["MACENTIRE_ROOT"]?.trimmingCharacters(in: .whitespacesAndNewlines),
-           !configured.isEmpty {
+        if let configured = environment["MACENTIRE_ROOT"],
+           !configured.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return URL(fileURLWithPath: configured, isDirectory: true).standardizedFileURL
         }
 
