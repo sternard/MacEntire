@@ -85,6 +85,12 @@ public final class PackageLauncher: @unchecked Sendable {
     private var runningProcesses: [UUID: Process] = [:]
     private var outputCaptures: [UUID: LauncherOutputCapture] = [:]
 
+    var activeOutputCaptureCount: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return outputCaptures.count
+    }
+
     public init() {}
 
     public func launch(
@@ -103,6 +109,7 @@ public final class PackageLauncher: @unchecked Sendable {
         process.standardError = outputCapture.pipe
         process.terminationHandler = { [weak self] process in
             self?.removeProcess(identifier)
+            let capturedOutput = outputCapture.finishAndClose()
 
             guard process.terminationStatus != 0 else {
                 completion(.success(()))
@@ -112,7 +119,7 @@ public final class PackageLauncher: @unchecked Sendable {
             completion(.failure(.unsuccessfulExit(
                 package: package.displayName,
                 status: process.terminationStatus,
-                output: outputCapture.finalString()
+                output: capturedOutput
             )))
         }
 
@@ -179,8 +186,8 @@ private final class LauncherOutputCapture: @unchecked Sendable {
         }
     }
 
-    func finalString() -> String {
-        let shouldFinish = drainAvailableOutputLocked()
+    func finishAndClose() -> String {
+        let shouldFinish = drainAvailableOutputLocked(forceEnd: true)
         let string = output.string
         readLock.unlock()
         if shouldFinish {
@@ -203,14 +210,14 @@ private final class LauncherOutputCapture: @unchecked Sendable {
     }
 
     private func drainAvailableOutput() {
-        let shouldFinish = drainAvailableOutputLocked()
+        let shouldFinish = drainAvailableOutputLocked(forceEnd: false)
         readLock.unlock()
         if shouldFinish {
             finish()
         }
     }
 
-    private func drainAvailableOutputLocked() -> Bool {
+    private func drainAvailableOutputLocked(forceEnd: Bool) -> Bool {
         readLock.lock()
         guard !didEnd else {
             return false
@@ -231,6 +238,10 @@ private final class LauncherOutputCapture: @unchecked Sendable {
                 return true
             }
             if errno == EAGAIN || errno == EWOULDBLOCK {
+                if forceEnd {
+                    didEnd = true
+                    return true
+                }
                 return false
             }
             didEnd = true

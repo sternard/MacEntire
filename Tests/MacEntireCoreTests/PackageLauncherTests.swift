@@ -214,13 +214,15 @@ final class PackageLauncherTests: XCTestCase {
         )
         let completionExpectation = expectation(description: "Launcher completion")
         let start = Date()
+        let launcher = PackageLauncher()
 
-        try PackageLauncher().launch(package) { _ in
+        try launcher.launch(package) { _ in
             completionExpectation.fulfill()
         }
 
         wait(for: [completionExpectation], timeout: 1)
         XCTAssertLessThan(Date().timeIntervalSince(start), 1)
+        XCTAssertEqual(launcher.activeOutputCaptureCount, 0)
     }
 }
 
