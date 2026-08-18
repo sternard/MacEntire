@@ -1674,7 +1674,7 @@ func gitHubRepositoryIdentity(_ value: String) -> String? {
         guard
             let url = URL(string: remote),
             let scheme = url.scheme?.lowercased(),
-            ["git", "http", "https", "ssh"].contains(scheme),
+            ["https", "ssh"].contains(scheme),
             url.host?.lowercased() == "github.com",
             url.query == nil,
             url.fragment == nil

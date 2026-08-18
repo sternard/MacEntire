@@ -1421,6 +1421,47 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
     }
 
+    func testRefusesUnauthenticatedCloneURLRewrites() throws {
+        for effectiveRemote in [
+            "http://github.com/sternard/Example-App.git",
+            "git://github.com/sternard/Example-App.git"
+        ] {
+            let directory = temporaryRoot.appendingPathComponent(
+                "Packages/Example-App",
+                isDirectory: true
+            )
+            let package = PackageDefinition(
+                repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+                repositoryName: "Example-App",
+                displayName: "Example App",
+                directoryURL: directory
+            )
+            let git = FakeGitRunner(
+                effectiveCloneURL: effectiveRemote,
+                statusOutput: ""
+            )
+
+            XCTAssertThrowsError(
+                try PackageSynchronizer(
+                    workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                    gitRunner: git
+                ).synchronize(package)
+            ) { error in
+                XCTAssertEqual(
+                    error as? PackageSyncError,
+                    .remoteMismatch(
+                        expected: "https://github.com/sternard/Example-App",
+                        actual: effectiveRemote
+                    )
+                )
+            }
+            XCTAssertEqual(git.commands, [[
+                "ls-remote", "--get-url", "https://github.com/sternard/Example-App"
+            ]])
+            XCTAssertFalse(FileManager.default.fileExists(atPath: directory.path))
+        }
+    }
+
     func testRefusesCloneWhoseEffectiveOriginDoesNotMatchConfiguration() throws {
         let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
         let package = PackageDefinition(
