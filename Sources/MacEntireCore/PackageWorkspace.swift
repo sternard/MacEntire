@@ -59,6 +59,7 @@ public enum ApplicationTerminationResolution: Equatable, Sendable {
 
 public struct ApplicationTerminationState: Equatable, Sendable {
     public private(set) var isSynchronizationInProgress = false
+    public private(set) var activeLauncherCount = 0
     public private(set) var isTerminationDeferred = false
 
     public init() {}
@@ -67,8 +68,12 @@ public struct ApplicationTerminationState: Equatable, Sendable {
         isSynchronizationInProgress = true
     }
 
+    public mutating func beginLaunch() {
+        activeLauncherCount += 1
+    }
+
     public mutating func requestTermination() -> Bool {
-        guard isSynchronizationInProgress else {
+        guard isSynchronizationInProgress || activeLauncherCount > 0 else {
             return true
         }
         isTerminationDeferred = true
@@ -79,13 +84,30 @@ public struct ApplicationTerminationState: Equatable, Sendable {
         allowDeferredTermination: Bool = true
     ) -> ApplicationTerminationResolution {
         isSynchronizationInProgress = false
+        if isTerminationDeferred, !allowDeferredTermination {
+            isTerminationDeferred = false
+            return .cancelDeferredTermination
+        }
+        return resolveDeferredTerminationIfIdle()
+    }
+
+    public mutating func endLaunch() -> ApplicationTerminationResolution {
+        guard activeLauncherCount > 0 else {
+            return .noDeferredTermination
+        }
+        activeLauncherCount -= 1
+        return resolveDeferredTerminationIfIdle()
+    }
+
+    private mutating func resolveDeferredTerminationIfIdle() -> ApplicationTerminationResolution {
+        guard !isSynchronizationInProgress, activeLauncherCount == 0 else {
+            return .noDeferredTermination
+        }
         guard isTerminationDeferred else {
             return .noDeferredTermination
         }
         isTerminationDeferred = false
-        return allowDeferredTermination
-            ? .completeDeferredTermination
-            : .cancelDeferredTermination
+        return .completeDeferredTermination
     }
 }
 

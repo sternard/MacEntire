@@ -24,7 +24,19 @@ private final class ApplicationTerminationCoordinator {
     }
 
     func endSynchronization(allowDeferredTermination: Bool) {
-        switch state.endSynchronization(allowDeferredTermination: allowDeferredTermination) {
+        handle(state.endSynchronization(allowDeferredTermination: allowDeferredTermination))
+    }
+
+    func beginLaunch() {
+        state.beginLaunch()
+    }
+
+    func endLaunch() {
+        handle(state.endLaunch())
+    }
+
+    private func handle(_ resolution: ApplicationTerminationResolution) {
+        switch resolution {
         case .noDeferredTermination:
             break
         case .completeDeferredTermination:
@@ -305,6 +317,7 @@ private final class PackageCatalog: ObservableObject {
         guard operationState.beginLaunch(packageIdentifier: definition.id) else {
             return
         }
+        terminationCoordinator.beginLaunch()
 
         let launchIdentifier = launchStatusState.beginLaunch(
             packageIdentifier: definition.id,
@@ -313,8 +326,10 @@ private final class PackageCatalog: ObservableObject {
         publishOperationStatus(currentLaunchStatusMessage())
 
         do {
+            let terminationCoordinator = terminationCoordinator
             try launcher.launch(package) { [weak self] result in
                 Task { @MainActor [weak self] in
+                    defer { terminationCoordinator.endLaunch() }
                     guard let self else {
                         return
                     }
@@ -330,6 +345,7 @@ private final class PackageCatalog: ObservableObject {
                 message: "Could not launch \(definition.displayName): \(error.localizedDescription)"
             )
             publishOperationStatus(currentLaunchStatusMessage())
+            terminationCoordinator.endLaunch()
         }
     }
 

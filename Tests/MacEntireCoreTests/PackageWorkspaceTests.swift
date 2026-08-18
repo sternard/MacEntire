@@ -146,6 +146,28 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertFalse(termination.isSynchronizationInProgress)
     }
 
+    func testTerminationIsDeferredUntilAllLaunchersEnd() {
+        var termination = ApplicationTerminationState()
+        termination.beginLaunch()
+        termination.beginLaunch()
+
+        XCTAssertFalse(termination.requestTermination())
+        XCTAssertTrue(termination.isTerminationDeferred)
+        XCTAssertEqual(termination.activeLauncherCount, 2)
+        XCTAssertEqual(
+            termination.endLaunch(),
+            .noDeferredTermination
+        )
+        XCTAssertTrue(termination.isTerminationDeferred)
+        XCTAssertEqual(termination.activeLauncherCount, 1)
+        XCTAssertEqual(
+            termination.endLaunch(),
+            .completeDeferredTermination
+        )
+        XCTAssertFalse(termination.isTerminationDeferred)
+        XCTAssertEqual(termination.activeLauncherCount, 0)
+    }
+
     func testDeferredTerminationCanBeCancelledWhenUpdateStateCannotBePersisted() {
         var termination = ApplicationTerminationState()
         termination.beginSynchronization()
