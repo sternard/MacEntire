@@ -2,6 +2,31 @@ import XCTest
 @testable import MacEntireCore
 
 final class PackageLauncherTests: XCTestCase {
+    func testLauncherPipeReadRetriesInterruptions() {
+        var attempts = 0
+        var byte: UInt8 = 0
+
+        let count = withUnsafeMutablePointer(to: &byte) { pointer in
+            readLauncherPipeRetryingInterruptions(
+                descriptor: -1,
+                buffer: UnsafeMutableRawPointer(pointer),
+                count: 1
+            ) { _, buffer, _ in
+                attempts += 1
+                if attempts == 1 {
+                    errno = EINTR
+                    return -1
+                }
+                buffer?.storeBytes(of: UInt8(ascii: "x"), as: UInt8.self)
+                return 1
+            }
+        }
+
+        XCTAssertEqual(count, 1)
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(byte, UInt8(ascii: "x"))
+    }
+
     func testSuccessfulLaunchCompletionClearsStatusMessage() {
         XCTAssertNil(packageLaunchCompletionMessage(for: .success(())))
     }

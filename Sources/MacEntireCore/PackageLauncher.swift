@@ -101,6 +101,23 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
     }
 }
 
+typealias LauncherPipeRead = (Int32, UnsafeMutableRawPointer?, Int) -> Int
+
+func readLauncherPipeRetryingInterruptions(
+    descriptor: Int32,
+    buffer: UnsafeMutableRawPointer?,
+    count: Int,
+    read: LauncherPipeRead = Darwin.read
+) -> Int {
+    while true {
+        let result = read(descriptor, buffer, count)
+        if result < 0, errno == EINTR {
+            continue
+        }
+        return result
+    }
+}
+
 public final class PackageLauncher: @unchecked Sendable {
     static let maximumCapturedOutputBytes = 64 * 1024
 
@@ -302,7 +319,11 @@ private final class LauncherOutputCapture: @unchecked Sendable {
         var remainingBytes = Self.maximumBytesPerDrain
         while remainingBytes > 0 {
             let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, min(bytes.count, remainingBytes))
+                readLauncherPipeRetryingInterruptions(
+                    descriptor: descriptor,
+                    buffer: bytes.baseAddress,
+                    count: min(bytes.count, remainingBytes)
+                )
             }
             if count > 0 {
                 if !captureDidFinish {
