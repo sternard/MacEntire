@@ -505,6 +505,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
         var restorationError: Error?
         var packageListWasEditedDuringUpdate = false
+        var packageListWasStagedDuringUpdate = false
         if preservedPackageListLinkDestination == nil {
             do {
                 let packageListStatus = try gitRunner.run(
@@ -512,6 +513,9 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     description: "Check for concurrent MacEntire package list edits"
                 )
                 packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
+                packageListWasStagedDuringUpdate = packageListStatus.first.map {
+                    $0 != " "
+                } ?? false
             } catch {
                 restorationError = error
             }
@@ -540,7 +544,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             restorationError = error
         }
 
-        if packageListHadStagedChanges {
+        if packageListHadStagedChanges && !packageListWasStagedDuringUpdate {
             do {
                 if let preservedIndexEntry {
                     _ = try gitRunner.run(

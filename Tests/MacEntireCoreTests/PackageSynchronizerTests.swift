@@ -87,6 +87,33 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
     }
 
+    func testMacEntireUpdatePreservesIndexEditMadeDuringUpdate() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let stagedObjectID = String(repeating: "1", count: 40)
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            indexEntryOutput: "100644 \(stagedObjectID) 0\tPackages/packages.txt",
+            headEntryOutput: "100644 blob \(String(repeating: "0", count: 40))\tPackages/packages.txt",
+            packageListEditDuringUpdate: "newer staged edit\n",
+            statusOutput: "MM Packages/packages.txt"
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        try synchronizer.synchronizeMacEntire()
+
+        XCTAssertFalse(git.commands.contains { arguments in
+            arguments.contains("update-index") && arguments.contains {
+                $0.contains(stagedObjectID)
+            }
+        })
+        XCTAssertEqual(try String(contentsOf: packageList), "newer staged edit\n")
+    }
+
     func testMacEntireUpdateDoesNotRequireReinstallationWhenRevisionIsUnchanged() throws {
         let packageList = try writePackageList("custom package list\n")
         let git = MacEntireUpdateGitRunner(
@@ -816,6 +843,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let updatedRevision: String
     private let packageListEditDuringUpdate: String?
     private let statusError: PackageSyncError?
+    private let statusOutput: String?
     private var didMerge = false
 
     init(
@@ -828,7 +856,8 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         originalRevision: String = "old-revision",
         updatedRevision: String = "new-revision",
         packageListEditDuringUpdate: String? = nil,
-        statusError: PackageSyncError? = nil
+        statusError: PackageSyncError? = nil,
+        statusOutput: String? = nil
     ) {
         self.rootDirectory = rootDirectory
         self.packageListURL = packageListURL
@@ -838,6 +867,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.updatedRevision = updatedRevision
         self.packageListEditDuringUpdate = packageListEditDuringUpdate
         self.statusError = statusError
+        self.statusOutput = statusOutput
         let unchangedObjectID = String(repeating: "0", count: 40)
         self.indexEntryOutput = indexEntryOutput
             ?? "100644 \(unchangedObjectID) 0\tPackages/packages.txt"
@@ -883,6 +913,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         if arguments.contains("status") {
             if let statusError {
                 throw statusError
+            }
+            if let statusOutput {
+                return statusOutput
             }
             if packageListEditDuringUpdate != nil {
                 return " M Packages/packages.txt"
