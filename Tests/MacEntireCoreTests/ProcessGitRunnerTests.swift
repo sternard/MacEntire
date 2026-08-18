@@ -91,4 +91,18 @@ final class ProcessGitRunnerTests: XCTestCase {
 
         XCTAssertEqual(output, "parsed value")
     }
+
+    func testSuccessfulCommandPreservesSignificantWhitespaceBeforeRecordTerminator() throws {
+        let runner = ProcessGitRunner(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            timeout: 2
+        )
+
+        let output = try runner.run(
+            ["-c", "printf 'path with space \\n'"],
+            description: "Run whitespace output command"
+        )
+
+        XCTAssertEqual(output, "path with space ")
+    }
 }

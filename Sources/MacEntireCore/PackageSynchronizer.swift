@@ -377,8 +377,11 @@ final class BoundedProcessOutput: @unchecked Sendable {
     var string: String {
         lock.lock()
         defer { lock.unlock() }
-        return String(decoding: data, as: UTF8.self)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var output = String(decoding: data, as: UTF8.self)
+        if output.last == "\n" {
+            output.removeLast()
+        }
+        return output
     }
 }
 
