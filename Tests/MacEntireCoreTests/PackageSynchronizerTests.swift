@@ -775,6 +775,30 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(git.commands.contains { $0.contains("merge") })
     }
 
+    func testRefusesOriginChangedDuringFetch() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(
+            rawRemoteOutputAfterFetch: "https://github.com/someone-else/Example-App",
+            statusOutput: ""
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .remoteMismatch(
+                    expected: "https://github.com/sternard/Example-App",
+                    actual: "https://github.com/someone-else/Example-App"
+                )
+            )
+        }
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
     func testRefusesDetachedHead() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(currentBranchOutput: "", statusOutput: "")
@@ -1345,6 +1369,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private(set) var commands: [[String]] = []
     private let remoteOutput: String
     private let rawRemoteOutput: String?
+    private let rawRemoteOutputAfterFetch: String?
     private let topLevelOutput: String?
     private let currentBranchOutput: String
     private let currentBranchOutputAfterFetch: String?
@@ -1355,6 +1380,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     init(
         remoteOutput: String = "https://github.com/sternard/Example-App.git",
         rawRemoteOutput: String? = nil,
+        rawRemoteOutputAfterFetch: String? = nil,
         topLevelOutput: String? = nil,
         currentBranchOutput: String = "main",
         currentBranchOutputAfterFetch: String? = nil,
@@ -1363,6 +1389,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     ) {
         self.remoteOutput = remoteOutput
         self.rawRemoteOutput = rawRemoteOutput
+        self.rawRemoteOutputAfterFetch = rawRemoteOutputAfterFetch
         self.topLevelOutput = topLevelOutput
         self.currentBranchOutput = currentBranchOutput
         self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
@@ -1376,6 +1403,9 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
             return topLevelOutput ?? arguments[1]
         }
         if arguments.suffix(3) == ["config", "--get", "remote.origin.url"] {
+            if didFetch, let rawRemoteOutputAfterFetch {
+                return rawRemoteOutputAfterFetch
+            }
             return rawRemoteOutput ?? remoteOutput
         }
         if arguments.contains("remote") {

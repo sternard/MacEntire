@@ -892,7 +892,8 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ["-C", package.directoryURL.path, "config", "--get", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
             )
-            guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
+            let verifiedRemote = normalizedGitRemote(remote)
+            guard verifiedRemote == normalizedGitRemote(package.repositoryURL.absoluteString) else {
                 throw PackageSyncError.remoteMismatch(
                     expected: package.repositoryURL.absoluteString,
                     actual: redactedGitRemote(remote)
@@ -930,6 +931,16 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ["-C", package.directoryURL.path, "fetch", "origin", "refs/heads/\(branch)"],
                 description: "Fetch \(package.repositoryName)"
             )
+            let remoteAfterFetch = try gitRunner.run(
+                ["-C", package.directoryURL.path, "config", "--get", "remote.origin.url"],
+                description: "Revalidate \(package.repositoryName) origin"
+            )
+            guard normalizedGitRemote(remoteAfterFetch) == verifiedRemote else {
+                throw PackageSyncError.remoteMismatch(
+                    expected: package.repositoryURL.absoluteString,
+                    actual: redactedGitRemote(remoteAfterFetch)
+                )
+            }
             let branchAfterFetch = try gitRunner.run(
                 ["-C", package.directoryURL.path, "branch", "--show-current"],
                 description: "Revalidate \(package.repositoryName) branch"
