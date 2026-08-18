@@ -39,6 +39,22 @@ final class PackageListTests: XCTestCase {
         }
     }
 
+    func testRejectsDotSegmentRepositoryOwners() {
+        let entries = [
+            "https://github.com/./Example-App",
+            "https://github.com/../Example-App",
+            "https://github.com/%2E%2E/Example-App"
+        ]
+
+        for entry in entries {
+            XCTAssertThrowsError(
+                try PackageListParser().parse(entry, packagesDirectory: packagesDirectory)
+            ) { error in
+                XCTAssertEqual(error as? PackageListError, .invalidEntry(line: 1, value: entry))
+            }
+        }
+    }
+
     func testRejectsIncompleteBranchOption() {
         let entry = "https://github.com/sternard/Storage-Assistant -b"
 

@@ -184,6 +184,11 @@ public struct PackageListParser: Sendable {
             return nil
         }
 
+        let ownerName = String(pathComponents[0])
+        guard ownerName != ".", ownerName != ".." else {
+            return nil
+        }
+
         var repositoryName = String(pathComponents[1])
         if repositoryName.lowercased().hasSuffix(".git") {
             repositoryName.removeLast(4)
@@ -196,7 +201,7 @@ public struct PackageListParser: Sendable {
         var canonical = components
         canonical.scheme = "https"
         canonical.host = "github.com"
-        canonical.path = "/\(pathComponents[0])/\(repositoryName)"
+        canonical.path = "/\(ownerName)/\(repositoryName)"
 
         guard let url = canonical.url else {
             return nil
