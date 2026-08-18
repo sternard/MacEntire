@@ -59,10 +59,17 @@ if command -v codesign >/dev/null 2>&1; then
 fi
 
 mkdir -p "$INSTALL_DIR"
-rm -rf "$APP_BUNDLE"
-cp -R "$STAGED_APP_BUNDLE" "$APP_BUNDLE"
+TEMP_INSTALL_DIR="$(mktemp -d "$INSTALL_DIR/.${PRODUCT_NAME}.install.XXXXXX")"
+trap 'rm -rf "$TEMP_INSTALL_DIR"' EXIT
+TEMP_APP_BUNDLE="$TEMP_INSTALL_DIR/$PRODUCT_NAME.app"
+cp -R "$STAGED_APP_BUNDLE" "$TEMP_APP_BUNDLE"
 
-plutil -lint "$APP_BUNDLE/Contents/Info.plist" >/dev/null
+plutil -lint "$TEMP_APP_BUNDLE/Contents/Info.plist" >/dev/null
+
+rm -rf "$APP_BUNDLE"
+mv "$TEMP_APP_BUNDLE" "$APP_BUNDLE"
+rmdir "$TEMP_INSTALL_DIR"
+trap - EXIT
 
 REINSTALL_MARKER="$HOME/Library/Application Support/MacEntire/reinstall-required"
 rm -f "$REINSTALL_MARKER"
