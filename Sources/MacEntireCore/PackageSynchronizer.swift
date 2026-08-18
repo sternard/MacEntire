@@ -1043,27 +1043,21 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 description: "Update \(package.repositoryName)"
             )
         } else {
+            checkoutDirectory = try reserveManagedCheckout(
+                named: package.repositoryName,
+                in: packagesDirectory
+            )
             var cloneArguments = ["clone", "--origin", "origin"]
             if let branch = package.branch {
                 cloneArguments.append(contentsOf: ["--branch", branch, "--single-branch"])
             }
-            let cloneDestination = packagesDirectory.url.appendingPathComponent(
-                package.repositoryName,
-                isDirectory: true
-            )
+            let cloneDestination = checkoutDirectory.url
             cloneArguments.append(contentsOf: [package.repositoryURL.absoluteString, cloneDestination.path])
             _ = try gitRunner.run(
                 cloneArguments,
                 description: "Clone \(package.repositoryName)"
             )
 
-            guard let clonedCheckout = try openManagedCheckout(
-                named: package.repositoryName,
-                in: packagesDirectory
-            ) else {
-                throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
-            }
-            checkoutDirectory = clonedCheckout
             let checkoutURL = checkoutDirectory.url
 
             let remoteOutput = try gitRunner.run(
@@ -1204,6 +1198,30 @@ func openManagedCheckout(
         throw posixError(errno)
     }
     return try StableDirectoryHandle(descriptor: descriptor)
+}
+
+func reserveManagedCheckout(
+    named repositoryName: String,
+    in packagesDirectory: StableDirectoryHandle
+) throws -> StableDirectoryHandle {
+    guard mkdirat(packagesDirectory.descriptor, repositoryName, 0o755) == 0 else {
+        if errno == EEXIST {
+            _ = try openManagedCheckout(
+                named: repositoryName,
+                in: packagesDirectory
+            )
+            throw PackageSyncError.destinationIsNotRepository(repositoryName)
+        }
+        throw posixError(errno)
+    }
+
+    guard let checkoutDirectory = try openManagedCheckout(
+        named: repositoryName,
+        in: packagesDirectory
+    ) else {
+        throw PackageSyncError.destinationIsNotRepository(repositoryName)
+    }
+    return checkoutDirectory
 }
 
 private struct GitFileEntry: Equatable {

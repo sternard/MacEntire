@@ -915,7 +915,7 @@ final class PackageSynchronizerTests: XCTestCase {
             "clone", "--origin", "origin", "--branch", "release/next", "--single-branch",
             "https://github.com/sternard/Example-App"
         ])
-        XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
+        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
         XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
         XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
     }
@@ -983,7 +983,7 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(git.commands[0].dropLast(), [
             "clone", "--origin", "origin", "https://github.com/sternard/Example-App"
         ])
-        XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
+        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
         XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
     }
 
@@ -1010,7 +1010,7 @@ final class PackageSynchronizerTests: XCTestCase {
             "clone", "--origin", "origin", "--branch", "release", "--single-branch",
             "https://github.com/sternard/Example-App"
         ])
-        XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
+        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
         XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
         XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
     }
@@ -1036,7 +1036,7 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(git.commands[0].dropLast(), [
             "clone", "--origin", "origin", "https://github.com/sternard/Example-App"
         ])
-        XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
+        XCTAssertTrue(try XCTUnwrap(git.commands[0].last).hasPrefix("/.vol/"))
         XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
         XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
     }
@@ -1264,6 +1264,63 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(
             atPath: externalPackagesDirectory.appendingPathComponent("Example-App").path
         ))
+    }
+
+    func testCloneStaysInReservedCheckoutWhenVisibleDestinationIsReplaced() throws {
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let reservedCheckout = temporaryRoot.appendingPathComponent(
+            "Reserved-Example-App",
+            isDirectory: true
+        )
+        let externalCheckout = temporaryRoot.appendingPathComponent(
+            "External-Example-App",
+            isDirectory: true
+        )
+        let visibleCheckout = packagesDirectory.appendingPathComponent(
+            "Example-App",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: packagesDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: externalCheckout, withIntermediateDirectories: true)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: visibleCheckout
+        )
+        let git = FakeGitRunner(statusOutput: "") { arguments in
+            XCTAssertTrue(FileManager.default.fileExists(atPath: visibleCheckout.path))
+            try FileManager.default.moveItem(at: visibleCheckout, to: reservedCheckout)
+            try FileManager.default.createSymbolicLink(
+                at: visibleCheckout,
+                withDestinationURL: externalCheckout
+            )
+
+            let cloneDirectory = URL(
+                fileURLWithPath: try XCTUnwrap(arguments.last),
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: cloneDirectory.appendingPathComponent("scripts", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            try self.writeExecutableLauncher(
+                at: cloneDirectory.appendingPathComponent("scripts/run-app.sh")
+            )
+        }
+
+        try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronize(package)
+
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: reservedCheckout.appendingPathComponent("scripts/run-app.sh").path
+        ))
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: externalCheckout.path),
+            []
+        )
     }
 
     func testRefusesLauncherDirectory() throws {
