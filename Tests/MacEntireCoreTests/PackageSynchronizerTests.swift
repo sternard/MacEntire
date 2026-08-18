@@ -138,6 +138,7 @@ final class PackageSynchronizerTests: XCTestCase {
             packageListURL: packageList,
             updatedPackageList: "upstream package list\n",
             fetchError: fetchError,
+            currentBranchOutputAfterFetch: "develop",
             packageListEditDuringFetch: "new branch package list\n"
         )
 
@@ -163,6 +164,32 @@ final class PackageSynchronizerTests: XCTestCase {
         }
 
         XCTAssertEqual(try String(contentsOf: packageList), "new branch package list\n")
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
+    func testMacEntireUpdateRestoresManifestWhenFetchFailsWithoutCheckoutChange() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let fetchError = PackageSyncError.commandFailed(
+            command: "Fetch MacEntire",
+            output: "network unavailable"
+        )
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            fetchError: fetchError
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronizeMacEntire()
+        ) { error in
+            XCTAssertEqual(error as? PackageSyncError, fetchError)
+        }
+
+        XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
         XCTAssertFalse(git.commands.contains { $0.contains("merge") })
     }
 

@@ -637,10 +637,29 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 description: "Prepare MacEntire update"
             )
             preservePostFetchCheckoutState = true
-            _ = try gitRunner.run(
-                ["-C", rootDirectory.path, "fetch"],
-                description: "Fetch MacEntire"
-            )
+            do {
+                _ = try gitRunner.run(
+                    ["-C", rootDirectory.path, "fetch"],
+                    description: "Fetch MacEntire"
+                )
+            } catch {
+                let fetchError = error
+                do {
+                    let branchAfterFailedFetch = try gitRunner.run(
+                        ["-C", rootDirectory.path, "branch", "--show-current"],
+                        description: "Revalidate MacEntire branch after fetch failure"
+                    )
+                    let revisionAfterFailedFetch = try gitRunner.run(
+                        ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+                        description: "Revalidate MacEntire revision after fetch failure"
+                    )
+                    preservePostFetchCheckoutState = branchAfterFailedFetch != originalBranch
+                        || revisionAfterFailedFetch != originalRevision
+                } catch {
+                    preservePostFetchCheckoutState = true
+                }
+                throw fetchError
+            }
             let branchAfterFetch = try gitRunner.run(
                 ["-C", rootDirectory.path, "branch", "--show-current"],
                 description: "Revalidate MacEntire branch"
