@@ -234,6 +234,103 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertEqual(packages.first?.state, .ready)
     }
 
+    func testRejectsPackagesDirectoryReplacementDuringInspection() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let visiblePackages = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let pinnedPackages = temporaryRoot.appendingPathComponent("Pinned-Packages", isDirectory: true)
+        let externalPackages = temporaryRoot.appendingPathComponent("External-Packages", isDirectory: true)
+        let repository = visiblePackages.appendingPathComponent("Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
+        )
+        try FileManager.default.createDirectory(at: externalPackages, withIntermediateDirectories: true)
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: ReplacingWorkspaceGitRunner {
+                try FileManager.default.moveItem(at: visiblePackages, to: pinnedPackages)
+                try FileManager.default.createSymbolicLink(
+                    at: visiblePackages,
+                    withDestinationURL: externalPackages
+                )
+            }
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("The Packages directory is a symbolic link.")
+        )
+    }
+
+    func testLaunchUsesPinnedCheckoutAfterPackagesDirectoryReplacement() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let visiblePackages = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        let pinnedPackages = temporaryRoot.appendingPathComponent("Pinned-Packages", isDirectory: true)
+        let externalPackages = temporaryRoot.appendingPathComponent("External-Packages", isDirectory: true)
+        let repository = visiblePackages.appendingPathComponent("Storage-Assistant", isDirectory: true)
+        let externalRepository = externalPackages.appendingPathComponent(
+            "Storage-Assistant",
+            isDirectory: true
+        )
+        for checkout in [repository, externalRepository] {
+            try FileManager.default.createDirectory(
+                at: checkout.appendingPathComponent(".git", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+            try FileManager.default.createDirectory(
+                at: checkout.appendingPathComponent("scripts", isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh"),
+            contents: "#!/bin/sh\nprintf 'original\\n' > \"$PWD/launch-source.txt\"\n"
+        )
+        try writeExecutableWorkspaceLauncher(
+            at: externalRepository.appendingPathComponent("scripts/run-app.sh"),
+            contents: "#!/bin/sh\nprintf 'external\\n' > \"$PWD/launch-source.txt\"\n"
+        )
+
+        let managedPackage = try XCTUnwrap(
+            PackageWorkspace(rootDirectory: temporaryRoot).packages(
+                gitRunner: WorkspaceGitRunner()
+            ).first
+        )
+        XCTAssertEqual(managedPackage.state, .ready)
+
+        try FileManager.default.moveItem(at: visiblePackages, to: pinnedPackages)
+        try FileManager.default.createSymbolicLink(
+            at: visiblePackages,
+            withDestinationURL: externalPackages
+        )
+        let completionExpectation = expectation(description: "Pinned launcher completes")
+        let launchResult = WorkspaceLockedBox<Result<Void, PackageLaunchError>?>(nil)
+
+        try PackageLauncher().launch(managedPackage) { result in
+            launchResult.set(result)
+            completionExpectation.fulfill()
+        }
+
+        wait(for: [completionExpectation], timeout: 2)
+        XCTAssertNoThrow(try launchResult.get()?.get())
+        XCTAssertEqual(
+            try String(contentsOf: pinnedPackages.appendingPathComponent(
+                "Storage-Assistant/launch-source.txt"
+            )),
+            "original\n"
+        )
+        XCTAssertFalse(FileManager.default.fileExists(
+            atPath: externalRepository.appendingPathComponent("launch-source.txt").path
+        ))
+    }
+
     func testReportsCredentialBearingOriginForConfiguredRepositoryAsReady() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
@@ -557,12 +654,64 @@ final class PackageWorkspaceTests: XCTestCase {
     }
 }
 
-private func writeExecutableWorkspaceLauncher(at url: URL) throws {
-    try "#!/usr/bin/env bash\n".write(to: url, atomically: true, encoding: .utf8)
+private func writeExecutableWorkspaceLauncher(
+    at url: URL,
+    contents: String = "#!/usr/bin/env bash\n"
+) throws {
+    try contents.write(to: url, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes(
         [.posixPermissions: 0o755],
         ofItemAtPath: url.path
     )
+}
+
+private final class ReplacingWorkspaceGitRunner: GitRunning, @unchecked Sendable {
+    private let lock = NSLock()
+    private let replacement: @Sendable () throws -> Void
+    private var didReplace = false
+
+    init(replacement: @escaping @Sendable () throws -> Void) {
+        self.replacement = replacement
+    }
+
+    func run(_ arguments: [String], description: String) throws -> String {
+        lock.lock()
+        let shouldReplace = !didReplace
+        didReplace = true
+        lock.unlock()
+
+        if shouldReplace {
+            try replacement()
+        }
+        if arguments.contains("rev-parse") {
+            return arguments[1]
+        }
+        if arguments.contains("branch") {
+            return "develop"
+        }
+        return "https://github.com/sternard/Storage-Assistant.git"
+    }
+}
+
+private final class WorkspaceLockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: Value
+
+    init(_ value: Value) {
+        self.value = value
+    }
+
+    func set(_ value: Value) {
+        lock.lock()
+        self.value = value
+        lock.unlock()
+    }
+
+    func get() -> Value {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }
 
 private struct WorkspaceGitRunner: GitRunning {

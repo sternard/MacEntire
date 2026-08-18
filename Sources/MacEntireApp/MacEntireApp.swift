@@ -119,13 +119,13 @@ private struct PackageMenu: View {
         switch package.state {
         case .ready:
             Button {
-                catalog.launch(package.definition)
+                catalog.launch(package)
             } label: {
                 Label(package.displayTitle, systemImage: "app")
             }
             .disabled(!package.isLaunchEnabled(
                 whileSynchronizing: catalog.isSynchronizing,
-                whilePackageIsLaunching: catalog.isLaunching(package.definition)
+                whilePackageIsLaunching: catalog.isLaunching(package)
             ))
         case .notInstalled:
             Label(package.displayTitle, systemImage: "arrow.down.circle")
@@ -300,14 +300,15 @@ private final class PackageCatalog: ObservableObject {
         }
     }
 
-    func launch(_ package: PackageDefinition) {
-        guard operationState.beginLaunch(packageIdentifier: package.id) else {
+    func launch(_ package: ManagedPackage) {
+        let definition = package.definition
+        guard operationState.beginLaunch(packageIdentifier: definition.id) else {
             return
         }
 
         let launchIdentifier = launchStatusState.beginLaunch(
-            packageIdentifier: package.id,
-            packageName: package.displayName
+            packageIdentifier: definition.id,
+            packageName: definition.displayName
         )
         publishOperationStatus(currentLaunchStatusMessage())
 
@@ -317,22 +318,22 @@ private final class PackageCatalog: ObservableObject {
                     guard let self else {
                         return
                     }
-                    operationState.endLaunch(packageIdentifier: package.id)
+                    operationState.endLaunch(packageIdentifier: definition.id)
                     launchStatusState.completeLaunch(identifier: launchIdentifier, result: result)
                     publishOperationStatus(currentLaunchStatusMessage())
                 }
             }
         } catch {
-            operationState.endLaunch(packageIdentifier: package.id)
+            operationState.endLaunch(packageIdentifier: definition.id)
             launchStatusState.failToStart(
                 identifier: launchIdentifier,
-                message: "Could not launch \(package.displayName): \(error.localizedDescription)"
+                message: "Could not launch \(definition.displayName): \(error.localizedDescription)"
             )
             publishOperationStatus(currentLaunchStatusMessage())
         }
     }
 
-    func isLaunching(_ package: PackageDefinition) -> Bool {
+    func isLaunching(_ package: ManagedPackage) -> Bool {
         operationState.isLaunching(packageIdentifier: package.id)
     }
 

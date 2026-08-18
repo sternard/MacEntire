@@ -92,6 +92,8 @@ public struct ApplicationTerminationState: Equatable, Sendable {
 public struct ManagedPackage: Identifiable, Equatable, Sendable {
     public let definition: PackageDefinition
     public let state: PackageState
+    let packagesDirectoryHandle: StableDirectoryHandle?
+    let checkoutDirectoryHandle: StableDirectoryHandle?
 
     public var id: String {
         definition.id
@@ -111,6 +113,32 @@ public struct ManagedPackage: Identifiable, Equatable, Sendable {
     public init(definition: PackageDefinition, state: PackageState) {
         self.definition = definition
         self.state = state
+        packagesDirectoryHandle = nil
+        checkoutDirectoryHandle = nil
+    }
+
+    init(
+        definition: PackageDefinition,
+        state: PackageState,
+        packagesDirectoryHandle: StableDirectoryHandle,
+        checkoutDirectoryHandle: StableDirectoryHandle
+    ) {
+        self.definition = definition
+        self.state = state
+        self.packagesDirectoryHandle = packagesDirectoryHandle
+        self.checkoutDirectoryHandle = checkoutDirectoryHandle
+    }
+
+    var launchDirectoryURL: URL {
+        checkoutDirectoryHandle?.url ?? definition.directoryURL
+    }
+
+    var launcherURL: URL {
+        launchDirectoryURL.appendingPathComponent("scripts/run-app.sh", isDirectory: false)
+    }
+
+    public static func == (lhs: ManagedPackage, rhs: ManagedPackage) -> Bool {
+        lhs.definition == rhs.definition && lhs.state == rhs.state
     }
 
     public func isLaunchEnabled(
@@ -151,19 +179,15 @@ public struct PackageWorkspace: Sendable {
     }
 
     public func definitions() throws -> [PackageDefinition] {
-        guard let contents = try? String(contentsOf: packageListURL, encoding: .utf8) else {
-            throw PackageListError.unreadableFile(packageListURL.path)
-        }
-
-        return try PackageListParser().parse(contents, packagesDirectory: packagesDirectory)
+        try definitions(packageListURL: packageListURL)
     }
 
     public func packages(
         fileManager: FileManager = .default,
         gitRunner: any GitRunning = ProcessGitRunner()
     ) throws -> [ManagedPackage] {
-        let definitions = try definitions()
         if isSymbolicLink(at: packagesDirectory, fileManager: fileManager) {
+            let definitions = try definitions()
             let error = PackageSyncError.symbolicLinkPackagesDirectory
             return definitions.map { definition in
                 ManagedPackage(
@@ -173,28 +197,43 @@ public struct PackageWorkspace: Sendable {
             }
         }
 
+        let packagesDirectoryHandle = try openManagedPackagesDirectory(
+            rootDirectory: rootDirectory
+        )
+        let stablePackageListURL = packagesDirectoryHandle.url.appendingPathComponent(
+            PackageListParser.packageListFilename,
+            isDirectory: false
+        )
+        let definitions = try definitions(packageListURL: stablePackageListURL)
+
         return definitions.map { definition in
-            guard !isSymbolicLink(at: definition.directoryURL, fileManager: fileManager) else {
-                let error = PackageSyncError.symbolicLinkCheckout(definition.repositoryName)
+            let checkoutDirectoryHandle: StableDirectoryHandle
+            do {
+                guard let openedCheckout = try openManagedCheckout(
+                    named: definition.repositoryName,
+                    in: packagesDirectoryHandle
+                ) else {
+                    return ManagedPackage(definition: definition, state: .notInstalled)
+                }
+                checkoutDirectoryHandle = openedCheckout
+            } catch {
                 return ManagedPackage(
                     definition: definition,
                     state: .unavailable(error.localizedDescription)
                 )
             }
+            let checkoutDirectory = checkoutDirectoryHandle.url
 
             var isDirectory: ObjCBool = false
-            guard fileManager.fileExists(atPath: definition.directoryURL.path, isDirectory: &isDirectory) else {
-                return ManagedPackage(definition: definition, state: .notInstalled)
-            }
-
-            guard isDirectory.boolValue else {
+            guard fileManager.fileExists(atPath: checkoutDirectory.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
                 return ManagedPackage(
                     definition: definition,
                     state: .unavailable("The package path is not a directory")
                 )
             }
 
-            guard fileManager.fileExists(atPath: definition.directoryURL.appendingPathComponent(".git").path) else {
+            guard fileManager.fileExists(atPath: checkoutDirectory.appendingPathComponent(".git").path) else {
                 return ManagedPackage(
                     definition: definition,
                     state: .unavailable("The package folder is not a Git repository")
@@ -202,8 +241,9 @@ public struct PackageWorkspace: Sendable {
             }
 
             var launcherIsDirectory: ObjCBool = false
+            let launcherURL = checkoutDirectory.appendingPathComponent("scripts/run-app.sh")
             guard
-                fileManager.fileExists(atPath: definition.launcherURL.path, isDirectory: &launcherIsDirectory),
+                fileManager.fileExists(atPath: launcherURL.path, isDirectory: &launcherIsDirectory),
                 !launcherIsDirectory.boolValue
             else {
                 return ManagedPackage(
@@ -211,7 +251,7 @@ public struct PackageWorkspace: Sendable {
                     state: .unavailable("Missing scripts/run-app.sh")
                 )
             }
-            guard fileManager.isExecutableFile(atPath: definition.launcherURL.path) else {
+            guard fileManager.isExecutableFile(atPath: launcherURL.path) else {
                 let error = PackageSyncError.nonExecutableLauncher(definition.repositoryName)
                 return ManagedPackage(
                     definition: definition,
@@ -222,7 +262,7 @@ public struct PackageWorkspace: Sendable {
             let resolvedTopLevel: String
             do {
                 resolvedTopLevel = try gitRunner.run(
-                    ["-C", definition.directoryURL.path, "rev-parse", "--show-toplevel"],
+                    ["-C", checkoutDirectory.path, "rev-parse", "--show-toplevel"],
                     description: "Validate \(definition.repositoryName) checkout"
                 )
             } catch {
@@ -236,7 +276,7 @@ public struct PackageWorkspace: Sendable {
                 fileURLWithPath: resolvedTopLevel,
                 isDirectory: true
             )
-            guard resolvedCheckoutPath(resolvedTopLevelURL) == resolvedCheckoutPath(definition.directoryURL) else {
+            guard checkoutDirectoryHandle.matches(resolvedTopLevelURL) else {
                 let error = PackageSyncError.destinationIsNotRepository(definition.repositoryName)
                 return ManagedPackage(
                     definition: definition,
@@ -247,7 +287,7 @@ public struct PackageWorkspace: Sendable {
             let remoteOutput: String
             do {
                 remoteOutput = try gitRunner.run(
-                    ["-C", definition.directoryURL.path, "config", "--get-all", "remote.origin.url"],
+                    ["-C", checkoutDirectory.path, "config", "--get-all", "remote.origin.url"],
                     description: "Read \(definition.repositoryName) origin"
                 )
             } catch {
@@ -284,7 +324,7 @@ public struct PackageWorkspace: Sendable {
             let currentBranch: String
             do {
                 currentBranch = try gitRunner.run(
-                    ["-C", definition.directoryURL.path, "branch", "--show-current"],
+                    ["-C", checkoutDirectory.path, "branch", "--show-current"],
                     description: "Read \(definition.repositoryName) branch"
                 )
             } catch {
@@ -316,8 +356,32 @@ public struct PackageWorkspace: Sendable {
                 }
             }
 
-            return ManagedPackage(definition: definition, state: .ready)
+            guard managedPackagesDirectoryIsCurrent(
+                packagesDirectoryHandle,
+                at: packagesDirectory
+            ) else {
+                let error = PackageSyncError.symbolicLinkPackagesDirectory
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
+            return ManagedPackage(
+                definition: definition,
+                state: .ready,
+                packagesDirectoryHandle: packagesDirectoryHandle,
+                checkoutDirectoryHandle: checkoutDirectoryHandle
+            )
         }
+    }
+
+    private func definitions(packageListURL: URL) throws -> [PackageDefinition] {
+        guard let contents = try? String(contentsOf: packageListURL, encoding: .utf8) else {
+            throw PackageListError.unreadableFile(packageListURL.path)
+        }
+
+        return try PackageListParser().parse(contents, packagesDirectory: packagesDirectory)
     }
 }
 

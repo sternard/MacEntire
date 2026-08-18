@@ -117,7 +117,33 @@ public final class PackageLauncher: @unchecked Sendable {
     public init() {}
 
     public func launch(
+        _ package: ManagedPackage,
+        completion: @escaping @Sendable (Result<Void, PackageLaunchError>) -> Void
+    ) throws {
+        try launch(
+            definition: package.definition,
+            directoryURL: package.launchDirectoryURL,
+            launcherURL: package.launcherURL,
+            completion: completion
+        )
+    }
+
+    public func launch(
         _ package: PackageDefinition,
+        completion: @escaping @Sendable (Result<Void, PackageLaunchError>) -> Void
+    ) throws {
+        try launch(
+            definition: package,
+            directoryURL: package.directoryURL,
+            launcherURL: package.launcherURL,
+            completion: completion
+        )
+    }
+
+    private func launch(
+        definition package: PackageDefinition,
+        directoryURL: URL,
+        launcherURL: URL,
         completion: @escaping @Sendable (Result<Void, PackageLaunchError>) -> Void
     ) throws {
         let identifier = UUID()
@@ -125,8 +151,8 @@ public final class PackageLauncher: @unchecked Sendable {
             self?.removeOutputCapture(identifier)
         }
         let process = Process()
-        process.executableURL = package.launcherURL
-        process.currentDirectoryURL = package.directoryURL
+        process.executableURL = launcherURL
+        process.currentDirectoryURL = directoryURL
         process.standardOutput = outputCapture.writer
         process.standardError = outputCapture.writer
         process.terminationHandler = { [weak self] process in

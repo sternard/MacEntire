@@ -1113,7 +1113,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
     }
 }
 
-private final class StableDirectoryHandle {
+final class StableDirectoryHandle: @unchecked Sendable {
     let descriptor: Int32
     let device: dev_t
     let inode: ino_t
@@ -1147,7 +1147,7 @@ private final class StableDirectoryHandle {
     }
 }
 
-private func openManagedPackagesDirectory(rootDirectory: URL) throws -> StableDirectoryHandle {
+func openManagedPackagesDirectory(rootDirectory: URL) throws -> StableDirectoryHandle {
     let rootDescriptor = open(rootDirectory.path, O_RDONLY | O_DIRECTORY)
     guard rootDescriptor >= 0 else {
         throw posixError(errno)
@@ -1172,14 +1172,14 @@ private func openManagedPackagesDirectory(rootDirectory: URL) throws -> StableDi
     return try StableDirectoryHandle(descriptor: descriptor)
 }
 
-private func managedPackagesDirectoryIsCurrent(
+func managedPackagesDirectoryIsCurrent(
     _ packagesDirectory: StableDirectoryHandle,
     at visibleURL: URL
 ) -> Bool {
     !isSymbolicLink(at: visibleURL) && packagesDirectory.matches(visibleURL)
 }
 
-private func openManagedCheckout(
+func openManagedCheckout(
     named repositoryName: String,
     in packagesDirectory: StableDirectoryHandle
 ) throws -> StableDirectoryHandle? {
