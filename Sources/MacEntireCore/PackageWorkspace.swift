@@ -8,7 +8,11 @@ public enum PackageState: Equatable, Sendable {
 
 public struct PackageOperationState: Equatable, Sendable {
     public private(set) var isSynchronizing = false
-    public private(set) var activeLauncherCount = 0
+    public private(set) var activePackageIdentifiers: Set<String> = []
+
+    public var activeLauncherCount: Int {
+        activePackageIdentifiers.count
+    }
 
     public var canSynchronize: Bool {
         !isSynchronizing && activeLauncherCount == 0
@@ -28,16 +32,22 @@ public struct PackageOperationState: Equatable, Sendable {
         isSynchronizing = false
     }
 
-    public mutating func beginLaunch() -> Bool {
-        guard !isSynchronizing else {
+    public mutating func beginLaunch(packageIdentifier: String) -> Bool {
+        guard
+            !isSynchronizing,
+            activePackageIdentifiers.insert(packageIdentifier).inserted
+        else {
             return false
         }
-        activeLauncherCount += 1
         return true
     }
 
-    public mutating func endLaunch() {
-        activeLauncherCount = max(activeLauncherCount - 1, 0)
+    public mutating func endLaunch(packageIdentifier: String) {
+        activePackageIdentifiers.remove(packageIdentifier)
+    }
+
+    public func isLaunching(packageIdentifier: String) -> Bool {
+        activePackageIdentifiers.contains(packageIdentifier)
     }
 }
 
@@ -91,8 +101,11 @@ public struct ManagedPackage: Identifiable, Equatable, Sendable {
         self.state = state
     }
 
-    public func isLaunchEnabled(whileSynchronizing isSynchronizing: Bool) -> Bool {
-        state == .ready && !isSynchronizing
+    public func isLaunchEnabled(
+        whileSynchronizing isSynchronizing: Bool,
+        whilePackageIsLaunching isPackageLaunching: Bool
+    ) -> Bool {
+        state == .ready && !isSynchronizing && !isPackageLaunching
     }
 }
 

@@ -61,20 +61,36 @@ final class PackageWorkspaceTests: XCTestCase {
         )
         let package = ManagedPackage(definition: definition, state: .ready)
 
-        XCTAssertTrue(package.isLaunchEnabled(whileSynchronizing: false))
-        XCTAssertFalse(package.isLaunchEnabled(whileSynchronizing: true))
+        XCTAssertTrue(package.isLaunchEnabled(
+            whileSynchronizing: false,
+            whilePackageIsLaunching: false
+        ))
+        XCTAssertFalse(package.isLaunchEnabled(
+            whileSynchronizing: true,
+            whilePackageIsLaunching: false
+        ))
+        XCTAssertFalse(package.isLaunchEnabled(
+            whileSynchronizing: false,
+            whilePackageIsLaunching: true
+        ))
     }
 
     func testSynchronizationIsBlockedWhileLauncherIsActive() {
         var operations = PackageOperationState()
 
-        XCTAssertTrue(operations.beginLaunch())
+        XCTAssertTrue(operations.beginLaunch(packageIdentifier: "first"))
+        XCTAssertFalse(operations.beginLaunch(packageIdentifier: "first"))
+        XCTAssertTrue(operations.beginLaunch(packageIdentifier: "second"))
+        XCTAssertTrue(operations.isLaunching(packageIdentifier: "first"))
+        XCTAssertEqual(operations.activeLauncherCount, 2)
         XCTAssertFalse(operations.canSynchronize)
         XCTAssertFalse(operations.beginSynchronization())
 
-        operations.endLaunch()
+        operations.endLaunch(packageIdentifier: "first")
+        XCTAssertFalse(operations.canSynchronize)
+        operations.endLaunch(packageIdentifier: "second")
         XCTAssertTrue(operations.beginSynchronization())
-        XCTAssertFalse(operations.beginLaunch())
+        XCTAssertFalse(operations.beginLaunch(packageIdentifier: "third"))
     }
 
     func testTerminationIsDeferredUntilSynchronizationEnds() {

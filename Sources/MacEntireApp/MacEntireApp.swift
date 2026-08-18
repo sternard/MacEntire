@@ -118,7 +118,10 @@ private struct PackageMenu: View {
             } label: {
                 Label(package.displayTitle, systemImage: "app")
             }
-            .disabled(!package.isLaunchEnabled(whileSynchronizing: catalog.isSynchronizing))
+            .disabled(!package.isLaunchEnabled(
+                whileSynchronizing: catalog.isSynchronizing,
+                whilePackageIsLaunching: catalog.isLaunching(package.definition)
+            ))
         case .notInstalled:
             Label(package.displayTitle, systemImage: "arrow.down.circle")
         case .unavailable:
@@ -260,7 +263,7 @@ private final class PackageCatalog: ObservableObject {
     }
 
     func launch(_ package: PackageDefinition) {
-        guard operationState.beginLaunch() else {
+        guard operationState.beginLaunch(packageIdentifier: package.id) else {
             return
         }
 
@@ -273,19 +276,23 @@ private final class PackageCatalog: ObservableObject {
                     guard let self else {
                         return
                     }
-                    operationState.endLaunch()
+                    operationState.endLaunch(packageIdentifier: package.id)
                     launchStatusState.completeLaunch(identifier: launchIdentifier, result: result)
                     statusMessage = launchStatusState.message
                 }
             }
         } catch {
-            operationState.endLaunch()
+            operationState.endLaunch(packageIdentifier: package.id)
             launchStatusState.failToStart(
                 identifier: launchIdentifier,
                 message: "Could not launch \(package.displayName): \(error.localizedDescription)"
             )
             statusMessage = launchStatusState.message
         }
+    }
+
+    func isLaunching(_ package: PackageDefinition) -> Bool {
+        operationState.isLaunching(packageIdentifier: package.id)
     }
 
     func openPackagesDirectory() {
