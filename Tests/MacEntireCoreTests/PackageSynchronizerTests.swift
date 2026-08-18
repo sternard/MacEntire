@@ -309,6 +309,25 @@ final class PackageSynchronizerTests: XCTestCase {
         )
     }
 
+    func testSynchronizationStatusLimitsGitDiagnosticForMenuDisplay() {
+        let messagePrefix = "MacEntire: Fetch MacEntire failed: "
+        let error = PackageSyncError.commandFailed(
+            command: "Fetch MacEntire",
+            output: "first line\nsecond\t\(String(repeating: "x", count: 300))"
+        )
+        let summary = SynchronizationSummary(
+            macEntireErrorMessage: error.localizedDescription,
+            packageResults: []
+        )
+
+        XCTAssertTrue(summary.statusMessage.hasPrefix(messagePrefix))
+        let diagnostic = summary.statusMessage.dropFirst(messagePrefix.count)
+        XCTAssertEqual(diagnostic.count, PackageSyncError.maximumDisplayedOutputCharacters)
+        XCTAssertFalse(diagnostic.contains(where: \.isNewline))
+        XCTAssertFalse(diagnostic.contains("\t"))
+        XCTAssertTrue(diagnostic.hasSuffix("…"))
+    }
+
     func testSynchronizeAllPreservesReinstallNoticeWhenPackageListIsInvalid() throws {
         let packageList = try writePackageList("not a repository\n")
         let git = MacEntireUpdateGitRunner(

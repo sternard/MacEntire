@@ -81,6 +81,8 @@ public struct SynchronizationSummary: Equatable, Sendable {
 }
 
 public enum PackageSyncError: LocalizedError, Equatable {
+    static let maximumDisplayedOutputCharacters = 200
+
     case destinationIsNotRepository(String)
     case symbolicLinkCheckout(String)
     case symbolicLinkPackagesDirectory
@@ -123,11 +125,22 @@ public enum PackageSyncError: LocalizedError, Equatable {
         case .packageListRestorationFailed(let detail, _):
             return "Could not restore Packages/packages.txt after updating MacEntire: \(detail)"
         case .commandFailed(let command, let output):
-            let detail = output.isEmpty ? "Git returned an error." : output
+            let summary = Self.displayedOutputSummary(output)
+            let detail = summary.isEmpty ? "Git returned an error." : summary
             return "\(command) failed: \(detail)"
         case .commandTimedOut(let command):
             return "\(command) timed out; check the network and try again."
         }
+    }
+
+    private static func displayedOutputSummary(_ output: String) -> String {
+        let singleLine = output
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        guard singleLine.count > maximumDisplayedOutputCharacters else {
+            return singleLine
+        }
+        return String(singleLine.prefix(maximumDisplayedOutputCharacters - 1)) + "…"
     }
 
     var requiresReinstallation: Bool {
