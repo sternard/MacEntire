@@ -847,7 +847,7 @@ final class PackageSynchronizerTests: XCTestCase {
             "https://github.com/sternard/Example-App"
         ])
         XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get", "remote.origin.url"])
+        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
         XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
     }
 
@@ -880,7 +880,7 @@ final class PackageSynchronizerTests: XCTestCase {
         ).synchronize(package)
 
         XCTAssertTrue(git.commands.contains {
-            $0.suffix(3) == ["config", "--get", "remote.origin.url"]
+            $0.suffix(3) == ["config", "--get-all", "remote.origin.url"]
         })
     }
 
@@ -915,7 +915,7 @@ final class PackageSynchronizerTests: XCTestCase {
             "clone", "--origin", "origin", "https://github.com/sternard/Example-App"
         ])
         XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get", "remote.origin.url"])
+        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
     }
 
     func testRefusesConfiguredBranchCloneThatLandsOnDetachedHead() throws {
@@ -942,7 +942,7 @@ final class PackageSynchronizerTests: XCTestCase {
             "https://github.com/sternard/Example-App"
         ])
         XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get", "remote.origin.url"])
+        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
         XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
     }
 
@@ -968,7 +968,7 @@ final class PackageSynchronizerTests: XCTestCase {
             "clone", "--origin", "origin", "https://github.com/sternard/Example-App"
         ])
         XCTAssertEqual(URL(fileURLWithPath: try XCTUnwrap(git.commands[0].last)).lastPathComponent, "Example-App")
-        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get", "remote.origin.url"])
+        XCTAssertEqual(git.commands[1].suffix(3), ["config", "--get-all", "remote.origin.url"])
         XCTAssertEqual(git.commands[2].suffix(2), ["branch", "--show-current"])
     }
 
@@ -989,6 +989,35 @@ final class PackageSynchronizerTests: XCTestCase {
                 .remoteMismatch(
                     expected: "https://github.com/sternard/Example-App",
                     actual: "https://github.com/someone-else/Example-App"
+                )
+            )
+        }
+        XCTAssertFalse(git.commands.contains {
+            $0.contains("status") || $0.contains("fetch") || $0.contains("merge")
+        })
+    }
+
+    func testRefusesAmbiguousStoredFetchURLs() throws {
+        let package = try makeInstalledPackage()
+        let git = FakeGitRunner(
+            rawRemoteOutput: [
+                "https://github.com/someone-else/Example-App",
+                "https://github.com/sternard/Example-App"
+            ].joined(separator: "\n"),
+            statusOutput: ""
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .remoteMismatch(
+                    expected: "https://github.com/sternard/Example-App",
+                    actual: "https://github.com/someone-else/Example-App, "
+                        + "https://github.com/sternard/Example-App"
                 )
             )
         }
@@ -1472,7 +1501,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         if arguments.contains("rev-parse") {
             return topLevelOutput ?? arguments[1]
         }
-        if arguments.suffix(3) == ["config", "--get", "remote.origin.url"] {
+        if arguments.suffix(3) == ["config", "--get-all", "remote.origin.url"] {
             if didFetch, let rawRemoteOutputAfterFetch {
                 return rawRemoteOutputAfterFetch
             }

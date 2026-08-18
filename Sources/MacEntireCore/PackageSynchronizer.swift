@@ -928,9 +928,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
             }
 
-            let remote = try gitRunner.run(
-                ["-C", checkoutURL.path, "config", "--get", "remote.origin.url"],
+            let remoteOutput = try gitRunner.run(
+                ["-C", checkoutURL.path, "config", "--get-all", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
+            )
+            let remote = try singleStoredGitRemote(
+                remoteOutput,
+                expected: package.repositoryURL.absoluteString
             )
             let verifiedRemote = normalizedGitRemote(remote)
             guard verifiedRemote == normalizedGitRemote(package.repositoryURL.absoluteString) else {
@@ -971,9 +975,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ["-C", checkoutURL.path, "fetch", "origin", "refs/heads/\(branch)"],
                 description: "Fetch \(package.repositoryName)"
             )
-            let remoteAfterFetch = try gitRunner.run(
-                ["-C", checkoutURL.path, "config", "--get", "remote.origin.url"],
+            let remoteOutputAfterFetch = try gitRunner.run(
+                ["-C", checkoutURL.path, "config", "--get-all", "remote.origin.url"],
                 description: "Revalidate \(package.repositoryName) origin"
+            )
+            let remoteAfterFetch = try singleStoredGitRemote(
+                remoteOutputAfterFetch,
+                expected: package.repositoryURL.absoluteString
             )
             guard normalizedGitRemote(remoteAfterFetch) == verifiedRemote else {
                 throw PackageSyncError.remoteMismatch(
@@ -1026,9 +1034,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
             checkoutDirectory = clonedCheckout
             let checkoutURL = checkoutDirectory.url
 
-            let remote = try gitRunner.run(
-                ["-C", checkoutURL.path, "config", "--get", "remote.origin.url"],
+            let remoteOutput = try gitRunner.run(
+                ["-C", checkoutURL.path, "config", "--get-all", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
+            )
+            let remote = try singleStoredGitRemote(
+                remoteOutput,
+                expected: package.repositoryURL.absoluteString
             )
             guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
                 throw PackageSyncError.remoteMismatch(
@@ -1200,6 +1212,17 @@ private func packageListTreeEntry(from output: String) -> GitFileEntry? {
         return nil
     }
     return GitFileEntry(mode: String(metadata[0]), objectID: String(metadata[2]))
+}
+
+private func singleStoredGitRemote(_ output: String, expected: String) throws -> String {
+    let remotes = output.split(whereSeparator: \.isNewline).map(String.init)
+    guard remotes.count == 1, let remote = remotes.first else {
+        throw PackageSyncError.remoteMismatch(
+            expected: expected,
+            actual: remotes.map(redactedGitRemote).joined(separator: ", ")
+        )
+    }
+    return remote
 }
 
 func normalizedGitRemote(_ value: String) -> String {
