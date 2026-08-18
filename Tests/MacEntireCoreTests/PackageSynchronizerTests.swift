@@ -597,6 +597,28 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertFalse(git.commands.contains { $0.contains("fetch") || $0.contains("merge") })
     }
 
+    func testRefusesConfiguredBranchChangedDuringFetch() throws {
+        let package = try makeInstalledPackage(branch: "develop")
+        let git = FakeGitRunner(
+            currentBranchOutput: "develop",
+            currentBranchOutputAfterFetch: "main",
+            statusOutput: ""
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .branchMismatch(repository: "Example-App", expected: "develop", actual: "main")
+            )
+        }
+        XCTAssertTrue(git.commands.contains { $0.contains("fetch") })
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
     func testRefusesDetachedHead() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(currentBranchOutput: "", statusOutput: "")
@@ -1098,19 +1120,23 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private let remoteOutput: String
     private let topLevelOutput: String?
     private let currentBranchOutput: String
+    private let currentBranchOutputAfterFetch: String?
     private let statusOutput: String
     private let cloneHandler: (() throws -> Void)?
+    private var didFetch = false
 
     init(
         remoteOutput: String = "https://github.com/sternard/Example-App.git",
         topLevelOutput: String? = nil,
         currentBranchOutput: String = "main",
+        currentBranchOutputAfterFetch: String? = nil,
         statusOutput: String,
         cloneHandler: (() throws -> Void)? = nil
     ) {
         self.remoteOutput = remoteOutput
         self.topLevelOutput = topLevelOutput
         self.currentBranchOutput = currentBranchOutput
+        self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
         self.statusOutput = statusOutput
         self.cloneHandler = cloneHandler
     }
@@ -1124,10 +1150,13 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
             return remoteOutput
         }
         if arguments.contains("branch") {
-            return currentBranchOutput
+            return didFetch ? currentBranchOutputAfterFetch ?? currentBranchOutput : currentBranchOutput
         }
         if arguments.contains("status") {
             return statusOutput
+        }
+        if arguments.contains("fetch") {
+            didFetch = true
         }
         if arguments.first == "clone" {
             try cloneHandler?()

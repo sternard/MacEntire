@@ -720,6 +720,20 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ["-C", package.directoryURL.path, "fetch", "origin", "refs/heads/\(branch)"],
                 description: "Fetch \(package.repositoryName)"
             )
+            let branchAfterFetch = try gitRunner.run(
+                ["-C", package.directoryURL.path, "branch", "--show-current"],
+                description: "Revalidate \(package.repositoryName) branch"
+            )
+            guard !branchAfterFetch.isEmpty else {
+                throw PackageSyncError.detachedHead(package.repositoryName)
+            }
+            guard branchAfterFetch == branch else {
+                throw PackageSyncError.branchMismatch(
+                    repository: package.repositoryName,
+                    expected: branch,
+                    actual: branchAfterFetch
+                )
+            }
             _ = try gitRunner.run(
                 [
                     "-C", package.directoryURL.path,
