@@ -263,6 +263,39 @@ final class PackageLauncherTests: XCTestCase {
         XCTAssertEqual(launcher.activeOutputCaptureCount, 0)
     }
 
+    func testCompletionDoesNotWaitForContinuouslyWritingBackgroundDescendant() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let stopMarker = temporaryRoot.appendingPathComponent("stop-output", isDirectory: false)
+        defer { try? Data().write(to: stopMarker) }
+        let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
+        let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
+        try writeExecutableLauncher("""
+        while [ ! -f "$PWD/stop-output" ]; do
+            printf 'continuous background output\n'
+        done &
+        exit 0
+        """, to: launcherURL)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: temporaryRoot
+        )
+        let completionExpectation = expectation(description: "Launcher completion")
+        let launcher = PackageLauncher()
+
+        try launcher.launch(package) { _ in
+            completionExpectation.fulfill()
+        }
+
+        wait(for: [completionExpectation], timeout: 1)
+        XCTAssertEqual(launcher.activeOutputCaptureCount, 0)
+    }
+
     func testBackgroundDescendantCanWriteAfterLauncherCompletes() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)

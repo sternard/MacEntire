@@ -175,6 +175,8 @@ public final class PackageLauncher: @unchecked Sendable {
 }
 
 private final class LauncherOutputCapture: @unchecked Sendable {
+    private static let maximumBytesPerDrain = 64 * 1024
+
     let writer: FileHandle
 
     private let reader: FileHandle
@@ -258,14 +260,16 @@ private final class LauncherOutputCapture: @unchecked Sendable {
 
         let descriptor = reader.fileDescriptor
         var buffer = [UInt8](repeating: 0, count: 8 * 1024)
-        while true {
+        var remainingBytes = Self.maximumBytesPerDrain
+        while remainingBytes > 0 {
             let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+                Darwin.read(descriptor, bytes.baseAddress, min(bytes.count, remainingBytes))
             }
             if count > 0 {
                 if !captureDidFinish {
                     output.append(Data(buffer.prefix(count)))
                 }
+                remainingBytes -= count
                 continue
             }
             if count == 0 || (errno != EAGAIN && errno != EWOULDBLOCK) {
@@ -274,6 +278,7 @@ private final class LauncherOutputCapture: @unchecked Sendable {
             }
             return false
         }
+        return false
     }
 
     private func markEndNotificationLocked() -> Bool {
