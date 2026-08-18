@@ -1169,7 +1169,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 cloneArguments.append(contentsOf: ["--branch", branch, "--single-branch"])
             }
             let cloneDestination = checkoutDirectory.url
-            cloneArguments.append(contentsOf: [effectiveRemote, cloneDestination.path])
+            cloneArguments.append(contentsOf: [configuredRemote, cloneDestination.path])
             do {
                 _ = try gitRunner.run(
                     cloneArguments,

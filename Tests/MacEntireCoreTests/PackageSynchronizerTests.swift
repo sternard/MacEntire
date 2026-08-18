@@ -1357,7 +1357,8 @@ final class PackageSynchronizerTests: XCTestCase {
             $0.suffix(3) == ["config", "--get-all", "remote.origin.url"]
         })
         XCTAssertTrue(git.commands.contains {
-            $0.first == "clone" && $0.dropLast().last == "git@github.com:sternard/Example-App.git"
+            $0.first == "clone"
+                && $0.dropLast().last == "https://github.com/sternard/Example-App"
         })
     }
 
