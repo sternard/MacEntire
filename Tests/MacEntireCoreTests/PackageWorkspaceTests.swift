@@ -337,6 +337,43 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testReportsRepositoryWithAmbiguousOriginsAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent(
+            "Packages/Storage-Assistant",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(
+                rawRemote: [
+                    "https://github.com/someone-else/Storage-Assistant",
+                    "https://github.com/sternard/Storage-Assistant"
+                ].joined(separator: "\n")
+            )
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable(
+                "Origin is https://github.com/someone-else/Storage-Assistant, "
+                    + "https://github.com/sternard/Storage-Assistant, expected "
+                    + "https://github.com/sternard/Storage-Assistant."
+            )
+        )
+    }
+
     func testReportsRepositoryResolvedToParentCheckoutAsUnavailable() throws {
         try writePackageList("https://github.com/sternard/Storage-Assistant")
         let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
@@ -553,7 +590,7 @@ private struct WorkspaceGitRunner: GitRunning {
         if arguments.contains("branch") {
             return currentBranch
         }
-        if arguments.suffix(3) == ["config", "--get", "remote.origin.url"] {
+        if arguments.suffix(3) == ["config", "--get-all", "remote.origin.url"] {
             return rawRemote ?? remote
         }
         return remote

@@ -1252,7 +1252,7 @@ private func packageListTreeEntry(from output: String) -> GitFileEntry? {
     return GitFileEntry(mode: String(metadata[0]), objectID: String(metadata[2]))
 }
 
-private func singleStoredGitRemote(_ output: String, expected: String) throws -> String {
+func singleStoredGitRemote(_ output: String, expected: String) throws -> String {
     let remotes = output.split(whereSeparator: \.isNewline).map(String.init)
     guard remotes.count == 1, let remote = remotes.first else {
         throw PackageSyncError.remoteMismatch(

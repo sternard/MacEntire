@@ -244,11 +244,24 @@ public struct PackageWorkspace: Sendable {
                 )
             }
 
+            let remoteOutput: String
+            do {
+                remoteOutput = try gitRunner.run(
+                    ["-C", definition.directoryURL.path, "config", "--get-all", "remote.origin.url"],
+                    description: "Read \(definition.repositoryName) origin"
+                )
+            } catch {
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
             let remote: String
             do {
-                remote = try gitRunner.run(
-                    ["-C", definition.directoryURL.path, "config", "--get", "remote.origin.url"],
-                    description: "Read \(definition.repositoryName) origin"
+                remote = try singleStoredGitRemote(
+                    remoteOutput,
+                    expected: definition.repositoryURL.absoluteString
                 )
             } catch {
                 return ManagedPackage(
