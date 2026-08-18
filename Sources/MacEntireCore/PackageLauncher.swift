@@ -104,7 +104,7 @@ public final class PackageLauncher: @unchecked Sendable {
         completion: @escaping @Sendable (Result<Void, PackageLaunchError>) -> Void
     ) throws {
         let identifier = UUID()
-        let outputCapture = try LauncherOutputCapture(maximumBytes: Self.maximumCapturedOutputBytes) { [weak self] in
+        let outputCapture = LauncherOutputCapture(maximumBytes: Self.maximumCapturedOutputBytes) { [weak self] in
             self?.removeOutputCapture(identifier)
         }
         let process = Process()
@@ -114,7 +114,7 @@ public final class PackageLauncher: @unchecked Sendable {
         process.standardError = outputCapture.writer
         process.terminationHandler = { [weak self] process in
             self?.removeProcess(identifier)
-            let capturedOutput = outputCapture.finishAndClose()
+            let capturedOutput = outputCapture.finishCapturing()
 
             guard process.terminationStatus != 0 else {
                 completion(.success(()))
@@ -173,60 +173,44 @@ public final class PackageLauncher: @unchecked Sendable {
 private final class LauncherOutputCapture: @unchecked Sendable {
     let writer: FileHandle
 
-    private let fileURL: URL
-    private let maximumBytes: Int
+    private let reader: FileHandle
+    private let output: BoundedProcessOutput
     private let lock = NSLock()
     private let onEnd: @Sendable () -> Void
     private var writerIsClosed = false
-    private var didFinish = false
+    private var readerIsClosed = false
+    private var captureDidFinish = false
+    private var didNotifyEnd = false
 
-    init(maximumBytes: Int, onEnd: @escaping @Sendable () -> Void) throws {
-        self.maximumBytes = maximumBytes
+    init(maximumBytes: Int, onEnd: @escaping @Sendable () -> Void) {
+        let pipe = Pipe()
+        reader = pipe.fileHandleForReading
+        writer = pipe.fileHandleForWriting
+        output = BoundedProcessOutput(maximumBytes: maximumBytes)
         self.onEnd = onEnd
-        var pathTemplate = Array(
-            FileManager.default.temporaryDirectory
-                .appendingPathComponent("MacEntire-Launcher-XXXXXX")
-                .path
-                .utf8CString
-        )
-        let descriptor = pathTemplate.withUnsafeMutableBufferPointer { buffer in
-            Darwin.mkstemp(buffer.baseAddress!)
+        let descriptor = reader.fileDescriptor
+        let flags = fcntl(descriptor, F_GETFL)
+        if flags >= 0 {
+            _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
         }
-        guard descriptor >= 0 else {
-            let errorCode = errno
-            throw NSError(
-                domain: NSPOSIXErrorDomain,
-                code: Int(errorCode),
-                userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errorCode))]
-            )
+        reader.readabilityHandler = { [self] _ in
+            drainAvailableOutput()
         }
-        fileURL = URL(fileURLWithPath: String(cString: pathTemplate))
-        writer = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
-    func finishAndClose() -> String {
-        guard beginFinishing() else {
-            return ""
-        }
-        closeParentWriter()
-        defer { onEnd() }
+    func finishCapturing() -> String {
+        lock.lock()
+        let shouldCloseReader = drainAvailableOutputLocked()
+        captureDidFinish = true
+        let shouldNotifyEnd = markEndNotificationLocked()
+        let capturedOutput = output.string
+        lock.unlock()
 
-        guard let reader = try? FileHandle(forReadingFrom: fileURL) else {
-            try? FileManager.default.removeItem(at: fileURL)
-            return ""
+        closeReaderIfNeeded(shouldCloseReader)
+        if shouldNotifyEnd {
+            onEnd()
         }
-        try? FileManager.default.removeItem(at: fileURL)
-        defer { try? reader.close() }
-
-        guard let endOffset = try? reader.seekToEnd() else {
-            return ""
-        }
-        let bytesToRead = min(endOffset, UInt64(maximumBytes))
-        try? reader.seek(toOffset: endOffset - bytesToRead)
-        let data = (try? reader.readToEnd()) ?? Data()
-        let output = BoundedProcessOutput(maximumBytes: maximumBytes)
-        output.append(data)
-        return output.string
+        return capturedOutput
     }
 
     func closeParentWriter() {
@@ -241,20 +225,66 @@ private final class LauncherOutputCapture: @unchecked Sendable {
     }
 
     func cancel() {
-        guard beginFinishing() else {
-            return
-        }
+        lock.lock()
+        captureDidFinish = true
+        let shouldCloseReader = !readerIsClosed
+        readerIsClosed = true
+        lock.unlock()
+
         closeParentWriter()
-        try? FileManager.default.removeItem(at: fileURL)
+        closeReaderIfNeeded(shouldCloseReader)
     }
 
-    private func beginFinishing() -> Bool {
+    private func drainAvailableOutput() {
         lock.lock()
-        defer { lock.unlock() }
-        guard !didFinish else {
+        let shouldCloseReader = drainAvailableOutputLocked()
+        let shouldNotifyEnd = readerIsClosed && markEndNotificationLocked()
+        lock.unlock()
+
+        closeReaderIfNeeded(shouldCloseReader)
+        if shouldNotifyEnd {
+            onEnd()
+        }
+    }
+
+    private func drainAvailableOutputLocked() -> Bool {
+        guard !readerIsClosed else {
             return false
         }
-        didFinish = true
+
+        let descriptor = reader.fileDescriptor
+        var buffer = [UInt8](repeating: 0, count: 8 * 1024)
+        while true {
+            let count = buffer.withUnsafeMutableBytes { bytes in
+                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
+            }
+            if count > 0 {
+                if !captureDidFinish {
+                    output.append(Data(buffer.prefix(count)))
+                }
+                continue
+            }
+            if count == 0 || (errno != EAGAIN && errno != EWOULDBLOCK) {
+                readerIsClosed = true
+                return true
+            }
+            return false
+        }
+    }
+
+    private func markEndNotificationLocked() -> Bool {
+        guard !didNotifyEnd else {
+            return false
+        }
+        didNotifyEnd = true
         return true
+    }
+
+    private func closeReaderIfNeeded(_ shouldClose: Bool) {
+        guard shouldClose else {
+            return
+        }
+        reader.readabilityHandler = nil
+        try? reader.close()
     }
 }

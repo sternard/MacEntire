@@ -292,6 +292,59 @@ final class PackageLauncherTests: XCTestCase {
         )
     }
 
+    func testBackgroundOutputSinkStaysBoundedAfterLauncherCompletes() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
+        let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
+        try writeExecutableLauncher("""
+        (
+            exec 3>&1
+            /usr/bin/yes x | /usr/bin/head -c 1048576 >&3
+            /usr/bin/stat -f '%z' /dev/fd/3 > "$PWD/output-sink-size.txt"
+            exec 3>&-
+            printf 'survived\n' > "$PWD/background-survived.txt"
+        ) &
+        exit 0
+        """, to: launcherURL)
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: temporaryRoot
+        )
+        let completionExpectation = expectation(description: "Launcher completion")
+        let backgroundExpectation = expectation(description: "Background output completes")
+
+        try PackageLauncher().launch(package) { _ in
+            completionExpectation.fulfill()
+        }
+        DispatchQueue.global().async {
+            let marker = temporaryRoot.appendingPathComponent("background-survived.txt")
+            for _ in 0..<200 {
+                if FileManager.default.fileExists(atPath: marker.path) {
+                    backgroundExpectation.fulfill()
+                    return
+                }
+                usleep(20_000)
+            }
+        }
+
+        wait(for: [completionExpectation, backgroundExpectation], timeout: 5)
+        let sizeString = try String(
+            contentsOf: temporaryRoot.appendingPathComponent("output-sink-size.txt")
+        ).trimmingCharacters(in: .whitespacesAndNewlines)
+        let sinkSize = try XCTUnwrap(Int(sizeString))
+        XCTAssertLessThanOrEqual(sinkSize, PackageLauncher.maximumCapturedOutputBytes)
+        XCTAssertEqual(
+            try String(contentsOf: temporaryRoot.appendingPathComponent("background-survived.txt")),
+            "survived\n"
+        )
+    }
+
     func testLauncherHonorsDeclaredInterpreter() throws {
         let temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)
