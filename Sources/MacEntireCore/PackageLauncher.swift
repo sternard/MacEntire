@@ -35,6 +35,10 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
         launchOrder.reversed().compactMap { messages[$0] }.first
     }
 
+    public func message(fallingBackTo fallbackMessage: String?) -> String? {
+        message ?? fallbackMessage
+    }
+
     public init() {}
 
     @discardableResult

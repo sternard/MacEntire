@@ -6,6 +6,23 @@ final class PackageLauncherTests: XCTestCase {
         XCTAssertNil(packageLaunchCompletionMessage(for: .success(())))
     }
 
+    func testSuccessfulLaunchCompletionRestoresFallbackStatusMessage() {
+        let identifier = UUID()
+        var status = PackageLaunchStatusState()
+        status.beginLaunch(
+            packageIdentifier: "example",
+            packageName: "Example App",
+            identifier: identifier
+        )
+
+        status.completeLaunch(identifier: identifier, result: .success(()))
+
+        XCTAssertEqual(
+            status.message(fallingBackTo: PendingReinstallationStore.statusMessage),
+            PendingReinstallationStore.statusMessage
+        )
+    }
+
     func testFailedLaunchCompletionPreservesErrorMessage() {
         let error = PackageLaunchError.unsuccessfulExit(
             package: "Example App",

@@ -306,7 +306,7 @@ private final class PackageCatalog: ObservableObject {
             packageIdentifier: package.id,
             packageName: package.displayName
         )
-        publishOperationStatus(launchStatusState.message)
+        publishOperationStatus(currentLaunchStatusMessage())
 
         do {
             try launcher.launch(package) { [weak self] result in
@@ -316,7 +316,7 @@ private final class PackageCatalog: ObservableObject {
                     }
                     operationState.endLaunch(packageIdentifier: package.id)
                     launchStatusState.completeLaunch(identifier: launchIdentifier, result: result)
-                    publishOperationStatus(launchStatusState.message)
+                    publishOperationStatus(currentLaunchStatusMessage())
                 }
             }
         } catch {
@@ -325,7 +325,7 @@ private final class PackageCatalog: ObservableObject {
                 identifier: launchIdentifier,
                 message: "Could not launch \(package.displayName): \(error.localizedDescription)"
             )
-            publishOperationStatus(launchStatusState.message)
+            publishOperationStatus(currentLaunchStatusMessage())
         }
     }
 
@@ -345,6 +345,12 @@ private final class PackageCatalog: ObservableObject {
     private func publishOperationStatus(_ message: String?) {
         statusMessage = message
         statusMessageIsInspectionError = false
+    }
+
+    private func currentLaunchStatusMessage() -> String? {
+        launchStatusState.message(
+            fallingBackTo: pendingReinstallationStore.statusMessage(for: workspace.rootDirectory)
+        )
     }
 }
 
