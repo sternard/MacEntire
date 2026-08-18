@@ -104,14 +104,14 @@ public final class PackageLauncher: @unchecked Sendable {
         completion: @escaping @Sendable (Result<Void, PackageLaunchError>) -> Void
     ) throws {
         let identifier = UUID()
-        let outputCapture = LauncherOutputCapture(maximumBytes: Self.maximumCapturedOutputBytes) { [weak self] in
+        let outputCapture = try LauncherOutputCapture(maximumBytes: Self.maximumCapturedOutputBytes) { [weak self] in
             self?.removeOutputCapture(identifier)
         }
         let process = Process()
         process.executableURL = package.launcherURL
         process.currentDirectoryURL = package.directoryURL
-        process.standardOutput = outputCapture.pipe
-        process.standardError = outputCapture.pipe
+        process.standardOutput = outputCapture.writer
+        process.standardError = outputCapture.writer
         process.terminationHandler = { [weak self] process in
             self?.removeProcess(identifier)
             let capturedOutput = outputCapture.finishAndClose()
@@ -171,92 +171,90 @@ public final class PackageLauncher: @unchecked Sendable {
 }
 
 private final class LauncherOutputCapture: @unchecked Sendable {
-    let pipe = Pipe()
+    let writer: FileHandle
 
-    private let output: BoundedProcessOutput
-    private let readLock = NSLock()
+    private let fileURL: URL
+    private let maximumBytes: Int
+    private let lock = NSLock()
     private let onEnd: @Sendable () -> Void
-    private var didEnd = false
+    private var writerIsClosed = false
+    private var didFinish = false
 
-    init(maximumBytes: Int, onEnd: @escaping @Sendable () -> Void) {
-        output = BoundedProcessOutput(maximumBytes: maximumBytes)
+    init(maximumBytes: Int, onEnd: @escaping @Sendable () -> Void) throws {
+        self.maximumBytes = maximumBytes
         self.onEnd = onEnd
-        let descriptor = pipe.fileHandleForReading.fileDescriptor
-        let flags = fcntl(descriptor, F_GETFL)
-        if flags >= 0 {
-            _ = fcntl(descriptor, F_SETFL, flags | O_NONBLOCK)
+        var pathTemplate = Array(
+            FileManager.default.temporaryDirectory
+                .appendingPathComponent("MacEntire-Launcher-XXXXXX")
+                .path
+                .utf8CString
+        )
+        let descriptor = pathTemplate.withUnsafeMutableBufferPointer { buffer in
+            Darwin.mkstemp(buffer.baseAddress!)
         }
-        pipe.fileHandleForReading.readabilityHandler = { [weak self] _ in
-            self?.drainAvailableOutput()
+        guard descriptor >= 0 else {
+            let errorCode = errno
+            throw NSError(
+                domain: NSPOSIXErrorDomain,
+                code: Int(errorCode),
+                userInfo: [NSLocalizedDescriptionKey: String(cString: strerror(errorCode))]
+            )
         }
+        fileURL = URL(fileURLWithPath: String(cString: pathTemplate))
+        writer = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
     }
 
     func finishAndClose() -> String {
-        let shouldFinish = drainAvailableOutputLocked(forceEnd: true)
-        let string = output.string
-        readLock.unlock()
-        if shouldFinish {
-            finish()
+        guard beginFinishing() else {
+            return ""
         }
-        return string
+        closeParentWriter()
+        defer { onEnd() }
+
+        guard let reader = try? FileHandle(forReadingFrom: fileURL) else {
+            try? FileManager.default.removeItem(at: fileURL)
+            return ""
+        }
+        try? FileManager.default.removeItem(at: fileURL)
+        defer { try? reader.close() }
+
+        guard let endOffset = try? reader.seekToEnd() else {
+            return ""
+        }
+        let bytesToRead = min(endOffset, UInt64(maximumBytes))
+        try? reader.seek(toOffset: endOffset - bytesToRead)
+        let data = (try? reader.readToEnd()) ?? Data()
+        let output = BoundedProcessOutput(maximumBytes: maximumBytes)
+        output.append(data)
+        return output.string
     }
 
     func closeParentWriter() {
-        try? pipe.fileHandleForWriting.close()
+        lock.lock()
+        guard !writerIsClosed else {
+            lock.unlock()
+            return
+        }
+        writerIsClosed = true
+        lock.unlock()
+        try? writer.close()
     }
 
     func cancel() {
-        readLock.lock()
-        didEnd = true
-        readLock.unlock()
-        pipe.fileHandleForReading.readabilityHandler = nil
-        try? pipe.fileHandleForReading.close()
-        try? pipe.fileHandleForWriting.close()
-    }
-
-    private func drainAvailableOutput() {
-        let shouldFinish = drainAvailableOutputLocked(forceEnd: false)
-        readLock.unlock()
-        if shouldFinish {
-            finish()
+        guard beginFinishing() else {
+            return
         }
+        closeParentWriter()
+        try? FileManager.default.removeItem(at: fileURL)
     }
 
-    private func drainAvailableOutputLocked(forceEnd: Bool) -> Bool {
-        readLock.lock()
-        guard !didEnd else {
+    private func beginFinishing() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !didFinish else {
             return false
         }
-
-        let descriptor = pipe.fileHandleForReading.fileDescriptor
-        var buffer = [UInt8](repeating: 0, count: 8 * 1024)
-        while true {
-            let count = buffer.withUnsafeMutableBytes { bytes in
-                Darwin.read(descriptor, bytes.baseAddress, bytes.count)
-            }
-            if count > 0 {
-                output.append(Data(buffer.prefix(count)))
-                continue
-            }
-            if count == 0 {
-                didEnd = true
-                return true
-            }
-            if errno == EAGAIN || errno == EWOULDBLOCK {
-                if forceEnd {
-                    didEnd = true
-                    return true
-                }
-                return false
-            }
-            didEnd = true
-            return true
-        }
-    }
-
-    private func finish() {
-        pipe.fileHandleForReading.readabilityHandler = nil
-        try? pipe.fileHandleForReading.close()
-        onEnd()
+        didFinish = true
+        return true
     }
 }
