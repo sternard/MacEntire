@@ -92,6 +92,21 @@ final class ProcessGitRunnerTests: XCTestCase {
         XCTAssertEqual(output, "parsed value")
     }
 
+    func testWaitsForDelayedOutputDrainBeforeReturningStandardOutput() throws {
+        let runner = ProcessGitRunner(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            timeout: 2,
+            standardOutputDrainDelay: 1.1
+        )
+
+        let output = try runner.run(
+            ["-c", "printf 'delayed value'"],
+            description: "Run delayed output command"
+        )
+
+        XCTAssertEqual(output, "delayed value")
+    }
+
     func testSuccessfulCommandPreservesSignificantWhitespaceBeforeRecordTerminator() throws {
         let runner = ProcessGitRunner(
             executableURL: URL(fileURLWithPath: "/bin/sh"),

@@ -163,13 +163,27 @@ public struct ProcessGitRunner: GitRunning, Sendable {
 
     private let executableURL: URL
     private let timeout: TimeInterval
+    private let standardOutputDrainDelay: TimeInterval
 
     public init(
         executableURL: URL = URL(fileURLWithPath: "/usr/bin/git"),
         timeout: TimeInterval = defaultTimeout
     ) {
+        self.init(
+            executableURL: executableURL,
+            timeout: timeout,
+            standardOutputDrainDelay: 0
+        )
+    }
+
+    init(
+        executableURL: URL,
+        timeout: TimeInterval,
+        standardOutputDrainDelay: TimeInterval
+    ) {
         self.executableURL = executableURL
         self.timeout = timeout
+        self.standardOutputDrainDelay = standardOutputDrainDelay
     }
 
     public func run(_ arguments: [String], description: String) throws -> String {
@@ -179,7 +193,9 @@ public struct ProcessGitRunner: GitRunning, Sendable {
         let standardError = BoundedProcessOutput(maximumBytes: Self.maximumCapturedOutputBytes)
         let standardOutputFinished = DispatchSemaphore(value: 0)
         let standardErrorFinished = DispatchSemaphore(value: 0)
+        let standardOutputDelay = OneShotDelay(standardOutputDrainDelay)
         standardOutputPipe.fileHandleForReading.readabilityHandler = { handle in
+            standardOutputDelay.waitIfNeeded()
             let data = handle.availableData
             guard !data.isEmpty else {
                 handle.readabilityHandler = nil
@@ -233,8 +249,8 @@ public struct ProcessGitRunner: GitRunning, Sendable {
             throw PackageSyncError.commandTimedOut(command: description)
         }
 
-        _ = standardOutputFinished.wait(timeout: .now() + 1)
-        _ = standardErrorFinished.wait(timeout: .now() + 1)
+        standardOutputFinished.wait()
+        standardErrorFinished.wait()
         let capturedStandardOutput = standardOutput.string
 
         guard processExitCode(waitStatus) == 0 else {
@@ -249,6 +265,25 @@ public struct ProcessGitRunner: GitRunning, Sendable {
         }
 
         return capturedStandardOutput
+    }
+}
+
+private final class OneShotDelay: @unchecked Sendable {
+    private let lock = NSLock()
+    private var duration: TimeInterval
+
+    init(_ duration: TimeInterval) {
+        self.duration = duration
+    }
+
+    func waitIfNeeded() {
+        lock.lock()
+        let duration = duration
+        self.duration = 0
+        lock.unlock()
+        if duration > 0 {
+            Thread.sleep(forTimeInterval: duration)
+        }
     }
 }
 
