@@ -107,6 +107,27 @@ final class ProcessGitRunnerTests: XCTestCase {
         XCTAssertEqual(output, "delayed value")
     }
 
+    func testBoundsOutputDrainWhenBackgroundDescendantKeepsPipeOpen() {
+        let runner = ProcessGitRunner(
+            executableURL: URL(fileURLWithPath: "/bin/sh"),
+            timeout: 2,
+            standardOutputDrainDelay: 0,
+            outputDrainTimeout: 0.1
+        )
+        let start = Date()
+
+        XCTAssertThrowsError(try runner.run(
+            ["-c", "/bin/sleep 30 & exit 0"],
+            description: "Run background output-holder test command"
+        )) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .commandTimedOut(command: "Run background output-holder test command")
+            )
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(start), 2)
+    }
+
     func testSuccessfulCommandPreservesSignificantWhitespaceBeforeRecordTerminator() throws {
         let runner = ProcessGitRunner(
             executableURL: URL(fileURLWithPath: "/bin/sh"),

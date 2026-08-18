@@ -160,10 +160,12 @@ public protocol GitRunning: Sendable {
 public struct ProcessGitRunner: GitRunning, Sendable {
     public static let defaultTimeout: TimeInterval = 5 * 60
     static let maximumCapturedOutputBytes = 256 * 1024
+    static let defaultOutputDrainTimeout: TimeInterval = 5
 
     private let executableURL: URL
     private let timeout: TimeInterval
     private let standardOutputDrainDelay: TimeInterval
+    private let outputDrainTimeout: TimeInterval
 
     public init(
         executableURL: URL = URL(fileURLWithPath: "/usr/bin/git"),
@@ -172,18 +174,21 @@ public struct ProcessGitRunner: GitRunning, Sendable {
         self.init(
             executableURL: executableURL,
             timeout: timeout,
-            standardOutputDrainDelay: 0
+            standardOutputDrainDelay: 0,
+            outputDrainTimeout: Self.defaultOutputDrainTimeout
         )
     }
 
     init(
         executableURL: URL,
         timeout: TimeInterval,
-        standardOutputDrainDelay: TimeInterval
+        standardOutputDrainDelay: TimeInterval,
+        outputDrainTimeout: TimeInterval = Self.defaultOutputDrainTimeout
     ) {
         self.executableURL = executableURL
         self.timeout = timeout
         self.standardOutputDrainDelay = standardOutputDrainDelay
+        self.outputDrainTimeout = outputDrainTimeout
     }
 
     public func run(_ arguments: [String], description: String) throws -> String {
@@ -249,8 +254,25 @@ public struct ProcessGitRunner: GitRunning, Sendable {
             throw PackageSyncError.commandTimedOut(command: description)
         }
 
-        standardOutputFinished.wait()
-        standardErrorFinished.wait()
+        let outputDrainDeadline = DispatchTime.now() + max(outputDrainTimeout, 0)
+        let standardOutputDidFinish = standardOutputFinished.wait(
+            timeout: outputDrainDeadline
+        ) == .success
+        let standardErrorDidFinish = standardErrorFinished.wait(
+            timeout: outputDrainDeadline
+        ) == .success
+        guard standardOutputDidFinish, standardErrorDidFinish else {
+            _ = Darwin.kill(-processIdentifier, SIGTERM)
+            let terminationDeadline = DispatchTime.now() + 1
+            if !standardOutputDidFinish {
+                _ = standardOutputFinished.wait(timeout: terminationDeadline)
+            }
+            if !standardErrorDidFinish {
+                _ = standardErrorFinished.wait(timeout: terminationDeadline)
+            }
+            _ = Darwin.kill(-processIdentifier, SIGKILL)
+            throw PackageSyncError.commandTimedOut(command: description)
+        }
         let capturedStandardOutput = standardOutput.string
 
         guard processExitCode(waitStatus) == 0 else {
