@@ -165,6 +165,7 @@ private final class PackageCatalog: ObservableObject {
     private let pendingReinstallationStore: PendingReinstallationStore
     private var refreshGeneration = 0
     private var statusMessageIsInspectionError = false
+    private var launchFailure: (packageID: String, message: String)?
 
     init(
         rootDirectory: URL = WorkspaceRoot.resolve(),
@@ -280,8 +281,19 @@ private final class PackageCatalog: ObservableObject {
                 }
                 runningProcesses[package.id] = nil
                 if process.terminationStatus != 0 {
-                    statusMessage = "Could not launch \(package.definition.displayName) "
+                    let message = "Could not launch \(package.definition.displayName) "
                         + "(exit status \(process.terminationStatus))"
+                    statusMessage = message
+                    statusMessageIsInspectionError = false
+                    launchFailure = (package.id, message)
+                } else if let failure = launchFailure,
+                          failure.packageID == package.id {
+                    if statusMessage == failure.message {
+                        statusMessage = pendingReinstallationStore.statusMessage(
+                            for: workspace.rootDirectory
+                        )
+                    }
+                    launchFailure = nil
                 }
             }
         }
@@ -291,9 +303,11 @@ private final class PackageCatalog: ObservableObject {
             try process.run()
         } catch {
             runningProcesses[package.id] = nil
-            statusMessage = "Could not launch \(package.definition.displayName): "
+            let message = "Could not launch \(package.definition.displayName): "
                 + error.localizedDescription
+            statusMessage = message
             statusMessageIsInspectionError = false
+            launchFailure = (package.id, message)
         }
     }
 
