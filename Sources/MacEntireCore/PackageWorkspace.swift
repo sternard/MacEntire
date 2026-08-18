@@ -240,7 +240,7 @@ public struct PackageWorkspace: Sendable {
             guard normalizedGitRemote(remote) == normalizedGitRemote(definition.repositoryURL.absoluteString) else {
                 let error = PackageSyncError.remoteMismatch(
                     expected: definition.repositoryURL.absoluteString,
-                    actual: remote.trimmingCharacters(in: .whitespacesAndNewlines)
+                    actual: redactedGitRemote(remote)
                 )
                 return ManagedPackage(
                     definition: definition,

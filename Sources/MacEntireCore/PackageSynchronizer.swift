@@ -616,7 +616,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
                 throw PackageSyncError.remoteMismatch(
                     expected: package.repositoryURL.absoluteString,
-                    actual: remote.trimmingCharacters(in: .whitespacesAndNewlines)
+                    actual: redactedGitRemote(remote)
                 )
             }
 
@@ -676,7 +676,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
             guard normalizedGitRemote(remote) == normalizedGitRemote(package.repositoryURL.absoluteString) else {
                 throw PackageSyncError.remoteMismatch(
                     expected: package.repositoryURL.absoluteString,
-                    actual: remote.trimmingCharacters(in: .whitespacesAndNewlines)
+                    actual: redactedGitRemote(remote)
                 )
             }
 
@@ -758,4 +758,24 @@ func normalizedGitRemote(_ value: String) -> String {
         normalized.removeLast(4)
     }
     return normalized.lowercased()
+}
+
+func redactedGitRemote(_ value: String) -> String {
+    let remote = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let schemeDelimiter = remote.range(of: "://") else {
+        return remote
+    }
+
+    let authorityStart = schemeDelimiter.upperBound
+    let authoritySuffix = remote[authorityStart...]
+    let authorityEnd = authoritySuffix.firstIndex { character in
+        character == "/" || character == "?" || character == "#"
+    } ?? remote.endIndex
+    let authority = remote[authorityStart..<authorityEnd]
+    guard let userInformationEnd = authority.lastIndex(of: "@") else {
+        return remote
+    }
+
+    return String(remote[..<authorityStart])
+        + String(remote[remote.index(after: userInformationEnd)...])
 }

@@ -199,7 +199,7 @@ final class PackageWorkspaceTests: XCTestCase {
 
         let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
             gitRunner: WorkspaceGitRunner(
-                remote: "https://github.com/someone-else/Storage-Assistant.git"
+                remote: "https://x-access-token:secret@github.com/someone-else/Storage-Assistant.git"
             )
         )
 

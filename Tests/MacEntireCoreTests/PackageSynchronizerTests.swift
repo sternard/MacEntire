@@ -627,7 +627,7 @@ final class PackageSynchronizerTests: XCTestCase {
     func testRefusesRepositoryWithUnexpectedOrigin() throws {
         let package = try makeInstalledPackage()
         let git = FakeGitRunner(
-            remoteOutput: "https://github.com/someone-else/Example-App",
+            remoteOutput: "https://x-access-token:secret@github.com/someone-else/Example-App",
             statusOutput: ""
         )
         let synchronizer = PackageSynchronizer(
