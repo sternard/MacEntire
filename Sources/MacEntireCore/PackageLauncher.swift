@@ -108,8 +108,7 @@ public final class PackageLauncher: @unchecked Sendable {
             self?.removeOutputCapture(identifier)
         }
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/bin/bash")
-        process.arguments = [package.launcherURL.path]
+        process.executableURL = package.launcherURL
         process.currentDirectoryURL = package.directoryURL
         process.standardOutput = outputCapture.pipe
         process.standardError = outputCapture.pipe

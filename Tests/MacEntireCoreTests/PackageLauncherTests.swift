@@ -112,10 +112,9 @@ final class PackageLauncherTests: XCTestCase {
         let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
         let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
-        try "echo 'required tool is missing' >&2\nexit 7\n".write(
-            to: launcherURL,
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            "echo 'required tool is missing' >&2\nexit 7\n",
+            to: launcherURL
         )
         let package = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
@@ -149,10 +148,9 @@ final class PackageLauncherTests: XCTestCase {
         let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
         let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
-        try "printf 'FINAL-DIAGNOSTIC' >&2\nexit 9\n".write(
-            to: launcherURL,
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            "printf 'FINAL-DIAGNOSTIC' >&2\nexit 9\n",
+            to: launcherURL
         )
         let package = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
@@ -186,11 +184,11 @@ final class PackageLauncherTests: XCTestCase {
         let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
         let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
-        try """
+        try writeExecutableLauncher("""
         /usr/bin/yes x | /usr/bin/head -c 70000
         printf '\nTAIL-MARKER\n' >&2
         exit 7
-        """.write(to: launcherURL, atomically: true, encoding: .utf8)
+        """, to: launcherURL)
         let package = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
             repositoryName: "Example-App",
@@ -225,10 +223,9 @@ final class PackageLauncherTests: XCTestCase {
         let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
         try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
         let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
-        try "/bin/sleep 2 &\nexit 0\n".write(
-            to: launcherURL,
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            "/bin/sleep 2 &\nexit 0\n",
+            to: launcherURL
         )
         let package = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
@@ -247,6 +244,54 @@ final class PackageLauncherTests: XCTestCase {
         wait(for: [completionExpectation], timeout: 1)
         XCTAssertLessThan(Date().timeIntervalSince(start), 1)
         XCTAssertEqual(launcher.activeOutputCaptureCount, 0)
+    }
+
+    func testLauncherHonorsDeclaredInterpreter() throws {
+        let temporaryRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MacEntireLauncherTests-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: temporaryRoot) }
+
+        let scriptsDirectory = temporaryRoot.appendingPathComponent("scripts", isDirectory: true)
+        try FileManager.default.createDirectory(at: scriptsDirectory, withIntermediateDirectories: true)
+        let launcherURL = scriptsDirectory.appendingPathComponent("run-app.sh", isDirectory: false)
+        try writeExecutableLauncher(
+            "#!/bin/zsh\nprint -r -- zsh > \"$PWD/interpreter.txt\"\n",
+            to: launcherURL,
+            includeDefaultShebang: false
+        )
+        let package = PackageDefinition(
+            repositoryURL: URL(string: "https://github.com/sternard/Example-App")!,
+            repositoryName: "Example-App",
+            displayName: "Example App",
+            directoryURL: temporaryRoot
+        )
+        let completionExpectation = expectation(description: "Launcher completion")
+        let launchResult = LockedBox<Result<Void, PackageLaunchError>?>(nil)
+
+        try PackageLauncher().launch(package) { result in
+            launchResult.set(result)
+            completionExpectation.fulfill()
+        }
+
+        wait(for: [completionExpectation], timeout: 2)
+        XCTAssertNoThrow(try launchResult.get()?.get())
+        XCTAssertEqual(
+            try String(contentsOf: temporaryRoot.appendingPathComponent("interpreter.txt")),
+            "zsh\n"
+        )
+    }
+
+    private func writeExecutableLauncher(
+        _ contents: String,
+        to url: URL,
+        includeDefaultShebang: Bool = true
+    ) throws {
+        let script = includeDefaultShebang ? "#!/bin/sh\n\(contents)" : contents
+        try script.write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: url.path
+        )
     }
 }
 
