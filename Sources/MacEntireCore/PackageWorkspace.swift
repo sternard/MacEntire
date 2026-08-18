@@ -57,10 +57,17 @@ public enum ApplicationTerminationResolution: Equatable, Sendable {
     case cancelDeferredTermination
 }
 
+public enum ApplicationTerminationRequest: Equatable, Sendable {
+    case terminateNow
+    case terminateLater
+    case cancel
+}
+
 public struct ApplicationTerminationState: Equatable, Sendable {
     public private(set) var isSynchronizationInProgress = false
     public private(set) var activeLauncherCount = 0
     public private(set) var isTerminationDeferred = false
+    public private(set) var isTerminationBlocked = false
 
     public init() {}
 
@@ -72,12 +79,15 @@ public struct ApplicationTerminationState: Equatable, Sendable {
         activeLauncherCount += 1
     }
 
-    public mutating func requestTermination() -> Bool {
+    public mutating func requestTermination() -> ApplicationTerminationRequest {
+        guard !isTerminationBlocked else {
+            return .cancel
+        }
         guard isSynchronizationInProgress || activeLauncherCount > 0 else {
-            return true
+            return .terminateNow
         }
         isTerminationDeferred = true
-        return false
+        return .terminateLater
     }
 
     public mutating func endSynchronization(
@@ -85,10 +95,18 @@ public struct ApplicationTerminationState: Equatable, Sendable {
     ) -> ApplicationTerminationResolution {
         isSynchronizationInProgress = false
         if isTerminationDeferred, !allowDeferredTermination {
+            isTerminationBlocked = true
             isTerminationDeferred = false
             return .cancelDeferredTermination
         }
+        if !allowDeferredTermination {
+            isTerminationBlocked = true
+        }
         return resolveDeferredTerminationIfIdle()
+    }
+
+    public mutating func allowTermination() {
+        isTerminationBlocked = false
     }
 
     public mutating func endLaunch() -> ApplicationTerminationResolution {

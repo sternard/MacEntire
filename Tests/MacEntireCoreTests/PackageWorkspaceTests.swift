@@ -136,7 +136,7 @@ final class PackageWorkspaceTests: XCTestCase {
         var termination = ApplicationTerminationState()
         termination.beginSynchronization()
 
-        XCTAssertFalse(termination.requestTermination())
+        XCTAssertEqual(termination.requestTermination(), .terminateLater)
         XCTAssertTrue(termination.isTerminationDeferred)
         XCTAssertEqual(
             termination.endSynchronization(),
@@ -151,7 +151,7 @@ final class PackageWorkspaceTests: XCTestCase {
         termination.beginLaunch()
         termination.beginLaunch()
 
-        XCTAssertFalse(termination.requestTermination())
+        XCTAssertEqual(termination.requestTermination(), .terminateLater)
         XCTAssertTrue(termination.isTerminationDeferred)
         XCTAssertEqual(termination.activeLauncherCount, 2)
         XCTAssertEqual(
@@ -171,7 +171,7 @@ final class PackageWorkspaceTests: XCTestCase {
     func testDeferredTerminationCanBeCancelledWhenUpdateStateCannotBePersisted() {
         var termination = ApplicationTerminationState()
         termination.beginSynchronization()
-        XCTAssertFalse(termination.requestTermination())
+        XCTAssertEqual(termination.requestTermination(), .terminateLater)
 
         XCTAssertEqual(
             termination.endSynchronization(allowDeferredTermination: false),
@@ -179,13 +179,40 @@ final class PackageWorkspaceTests: XCTestCase {
         )
         XCTAssertFalse(termination.isTerminationDeferred)
         XCTAssertFalse(termination.isSynchronizationInProgress)
+        XCTAssertTrue(termination.isTerminationBlocked)
+        XCTAssertEqual(termination.requestTermination(), .cancel)
     }
 
     func testTerminationProceedsImmediatelyOutsideSynchronization() {
         var termination = ApplicationTerminationState()
 
-        XCTAssertTrue(termination.requestTermination())
+        XCTAssertEqual(termination.requestTermination(), .terminateNow)
         XCTAssertFalse(termination.isTerminationDeferred)
+    }
+
+    func testTerminationRemainsBlockedUntilReminderCanBePersisted() {
+        var termination = ApplicationTerminationState()
+        termination.beginSynchronization()
+
+        XCTAssertEqual(
+            termination.endSynchronization(allowDeferredTermination: false),
+            .noDeferredTermination
+        )
+        XCTAssertTrue(termination.isTerminationBlocked)
+        XCTAssertEqual(termination.requestTermination(), .cancel)
+
+        termination.beginSynchronization()
+        XCTAssertEqual(
+            termination.endSynchronization(),
+            .noDeferredTermination
+        )
+        XCTAssertTrue(termination.isTerminationBlocked)
+        XCTAssertEqual(termination.requestTermination(), .cancel)
+
+        termination.allowTermination()
+
+        XCTAssertFalse(termination.isTerminationBlocked)
+        XCTAssertEqual(termination.requestTermination(), .terminateNow)
     }
 
     func testPendingReinstallationReminderSurvivesDeferredTerminationCompletion() throws {
@@ -194,7 +221,7 @@ final class PackageWorkspaceTests: XCTestCase {
         let rootDirectory = temporaryRoot.appendingPathComponent("Checkout", isDirectory: true)
         var termination = ApplicationTerminationState()
         termination.beginSynchronization()
-        XCTAssertFalse(termination.requestTermination())
+        XCTAssertEqual(termination.requestTermination(), .terminateLater)
 
         try store.markRequired(for: rootDirectory)
         XCTAssertEqual(

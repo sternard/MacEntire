@@ -27,6 +27,10 @@ private final class ApplicationTerminationCoordinator {
         handle(state.endSynchronization(allowDeferredTermination: allowDeferredTermination))
     }
 
+    func allowTermination() {
+        state.allowTermination()
+    }
+
     func beginLaunch() {
         state.beginLaunch()
     }
@@ -47,7 +51,14 @@ private final class ApplicationTerminationCoordinator {
     }
 
     func applicationShouldTerminate() -> NSApplication.TerminateReply {
-        state.requestTermination() ? .terminateNow : .terminateLater
+        switch state.requestTermination() {
+        case .terminateNow:
+            return .terminateNow
+        case .terminateLater:
+            return .terminateLater
+        case .cancel:
+            return .terminateCancel
+        }
     }
 }
 
@@ -214,6 +225,7 @@ private final class PackageCatalog: ObservableObject {
     private var launchStatusState = PackageLaunchStatusState()
     private var refreshGeneration = 0
     private var statusMessageIsInspectionError = false
+    private var reinstallReminderNeedsPersistence = false
 
     init(
         rootDirectory: URL = WorkspaceRoot.resolve(),
@@ -281,14 +293,20 @@ private final class PackageCatalog: ObservableObject {
             var allowDeferredTermination = true
             switch result {
             case .success(let summary):
-                if summary.macEntireRequiresReinstallation {
+                if summary.macEntireRequiresReinstallation || reinstallReminderNeedsPersistence {
+                    let reinstallStatusMessage = summary.macEntireRequiresReinstallation
+                        ? summary.statusMessage
+                        : "\(PendingReinstallationStore.statusMessage); \(summary.statusMessage)"
                     do {
                         try pendingReinstallationStore.markRequired(for: workspace.rootDirectory)
-                        publishOperationStatus(summary.statusMessage)
+                        reinstallReminderNeedsPersistence = false
+                        terminationCoordinator.allowTermination()
+                        publishOperationStatus(reinstallStatusMessage)
                     } catch {
+                        reinstallReminderNeedsPersistence = true
                         allowDeferredTermination = false
                         publishOperationStatus(
-                            "\(summary.statusMessage); could not save the reinstall reminder, so MacEntire will stay open: "
+                            "\(reinstallStatusMessage); could not save the reinstall reminder, so MacEntire will stay open: "
                                 + error.localizedDescription
                         )
                     }
