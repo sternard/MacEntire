@@ -28,11 +28,13 @@ final class PackageSynchronizerTests: XCTestCase {
             gitRunner: git
         )
 
-        try synchronizer.synchronizeMacEntire()
+        let requiresReinstallation = try synchronizer.synchronizeMacEntire()
 
+        XCTAssertTrue(requiresReinstallation)
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
         XCTAssertEqual(git.commands, [
             ["-C", temporaryRoot.path, "rev-parse", "--show-toplevel"],
+            ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
             ["-C", temporaryRoot.path, "ls-files", "--stage", "--", "Packages/packages.txt"],
             ["-C", temporaryRoot.path, "ls-tree", "HEAD", "--", "Packages/packages.txt"],
             [
@@ -40,8 +42,39 @@ final class PackageSynchronizerTests: XCTestCase {
                 "restore", "--source=HEAD", "--staged", "--worktree", "--", "Packages/packages.txt"
             ],
             ["-C", temporaryRoot.path, "fetch"],
-            ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"]
+            ["-C", temporaryRoot.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
+            ["-C", temporaryRoot.path, "rev-parse", "HEAD"]
         ])
+    }
+
+    func testMacEntireUpdateDoesNotRequireReinstallationWhenRevisionIsUnchanged() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            originalRevision: "unchanged",
+            updatedRevision: "unchanged"
+        )
+
+        let requiresReinstallation = try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeMacEntire()
+
+        XCTAssertFalse(requiresReinstallation)
+    }
+
+    func testSynchronizationStatusRequiresReinstallAfterMacEntireUpdate() {
+        let summary = SynchronizationSummary(
+            macEntireRequiresReinstallation: true,
+            packageResults: []
+        )
+
+        XCTAssertEqual(
+            summary.statusMessage,
+            "MacEntire updated — quit and run scripts/install-app.sh to install it"
+        )
     }
 
     func testMacEntireUpdateFastForwardsRealRepositoryAndPreservesPartiallyStagedPackageList() throws {
@@ -685,6 +718,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let updateError: PackageSyncError?
     private let indexEntryOutput: String
     private let headEntryOutput: String
+    private let originalRevision: String
+    private let updatedRevision: String
+    private var didMerge = false
 
     init(
         rootDirectory: URL,
@@ -692,12 +728,16 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         updatedPackageList: String,
         updateError: PackageSyncError? = nil,
         indexEntryOutput: String? = nil,
-        headEntryOutput: String? = nil
+        headEntryOutput: String? = nil,
+        originalRevision: String = "old-revision",
+        updatedRevision: String = "new-revision"
     ) {
         self.rootDirectory = rootDirectory
         self.packageListURL = packageListURL
         self.updatedPackageList = updatedPackageList
         self.updateError = updateError
+        self.originalRevision = originalRevision
+        self.updatedRevision = updatedRevision
         let unchangedObjectID = String(repeating: "0", count: 40)
         self.indexEntryOutput = indexEntryOutput
             ?? "100644 \(unchangedObjectID) 0\tPackages/packages.txt"
@@ -707,6 +747,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
 
     func run(_ arguments: [String], description: String) throws -> String {
         commands.append(arguments)
+        if arguments.suffix(2) == ["rev-parse", "HEAD"] {
+            return didMerge ? updatedRevision : originalRevision
+        }
         if arguments.contains("rev-parse") {
             return rootDirectory.path
         }
@@ -725,6 +768,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         }
         if arguments.contains("merge") {
             try updatedPackageList.write(to: packageListURL, atomically: true, encoding: .utf8)
+            didMerge = true
             if let updateError {
                 throw updateError
             }

@@ -17,11 +17,40 @@ public struct PackageSyncResult: Equatable, Sendable {
 
 public struct SynchronizationSummary: Equatable, Sendable {
     public let macEntireErrorMessage: String?
+    public let macEntireRequiresReinstallation: Bool
     public let packageResults: [PackageSyncResult]
 
-    public init(macEntireErrorMessage: String? = nil, packageResults: [PackageSyncResult]) {
+    public init(
+        macEntireErrorMessage: String? = nil,
+        macEntireRequiresReinstallation: Bool = false,
+        packageResults: [PackageSyncResult]
+    ) {
         self.macEntireErrorMessage = macEntireErrorMessage
+        self.macEntireRequiresReinstallation = macEntireRequiresReinstallation
         self.packageResults = packageResults
+    }
+
+    public var statusMessage: String {
+        let failures = packageResults.filter { !$0.succeeded }
+        if let macEntireErrorMessage {
+            if failures.isEmpty {
+                return "MacEntire: \(macEntireErrorMessage)"
+            }
+            return "MacEntire and \(failures.count) package updates could not be synced"
+        }
+        if macEntireRequiresReinstallation {
+            if failures.isEmpty {
+                return "MacEntire updated — quit and run scripts/install-app.sh to install it"
+            }
+            return "MacEntire updated — reinstall required; \(failures.count) package updates could not be synced"
+        }
+        if failures.isEmpty {
+            return "MacEntire and all packages are up to date"
+        }
+        if failures.count == 1, let failure = failures.first {
+            return "\(failure.package.displayName): \(failure.errorMessage ?? "Sync failed")"
+        }
+        return "\(failures.count) packages could not be synced"
     }
 }
 
@@ -305,10 +334,12 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
     public func synchronizeAll() throws -> SynchronizationSummary {
         let macEntireErrorMessage: String?
+        let macEntireRequiresReinstallation: Bool
         do {
-            try synchronizeMacEntire()
+            macEntireRequiresReinstallation = try synchronizeMacEntire()
             macEntireErrorMessage = nil
         } catch {
+            macEntireRequiresReinstallation = false
             macEntireErrorMessage = error.localizedDescription
         }
 
@@ -323,11 +354,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
         return SynchronizationSummary(
             macEntireErrorMessage: macEntireErrorMessage,
+            macEntireRequiresReinstallation: macEntireRequiresReinstallation,
             packageResults: packageResults
         )
     }
 
-    func synchronizeMacEntire() throws {
+    @discardableResult
+    func synchronizeMacEntire() throws -> Bool {
         guard !isSymbolicLink(at: workspace.packagesDirectory) else {
             throw PackageSyncError.symbolicLinkPackagesDirectory
         }
@@ -341,6 +374,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
         guard resolvedCheckoutPath(resolvedTopLevelURL) == resolvedCheckoutPath(rootDirectory) else {
             throw PackageSyncError.macEntireIsNotRepository
         }
+        let originalRevision = try gitRunner.run(
+            ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+            description: "Read current MacEntire revision"
+        )
 
         let fileManager = FileManager.default
         let preservedPackageListLinkDestination = try? fileManager.destinationOfSymbolicLink(
@@ -368,6 +405,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         )
         let packageListHadStagedChanges = preservedIndexEntry != headIndexEntry
         var updateError: Error?
+        var updatedRevision = originalRevision
         do {
             _ = try gitRunner.run(
                 [
@@ -383,6 +421,10 @@ public final class PackageSynchronizer: @unchecked Sendable {
             _ = try gitRunner.run(
                 ["-C", rootDirectory.path, "merge", "--ff-only", "--no-overwrite-ignore", "@{upstream}"],
                 description: "Update MacEntire"
+            )
+            updatedRevision = try gitRunner.run(
+                ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+                description: "Read updated MacEntire revision"
             )
         } catch {
             updateError = error
@@ -441,6 +483,8 @@ public final class PackageSynchronizer: @unchecked Sendable {
         if let updateError {
             throw updateError
         }
+
+        return updatedRevision != originalRevision
     }
 
     public func synchronize(_ package: PackageDefinition) throws {

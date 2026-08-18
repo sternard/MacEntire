@@ -220,20 +220,7 @@ private final class PackageCatalog: ObservableObject {
             operationState.endSynchronization()
             switch result {
             case .success(let summary):
-                let failures = summary.packageResults.filter { !$0.succeeded }
-                if let macEntireErrorMessage = summary.macEntireErrorMessage {
-                    if failures.isEmpty {
-                        statusMessage = "MacEntire: \(macEntireErrorMessage)"
-                    } else {
-                        statusMessage = "MacEntire and \(failures.count) package updates could not be synced"
-                    }
-                } else if failures.isEmpty {
-                    statusMessage = "MacEntire and all packages are up to date"
-                } else if failures.count == 1, let failure = failures.first {
-                    statusMessage = "\(failure.package.displayName): \(failure.errorMessage ?? "Sync failed")"
-                } else {
-                    statusMessage = "\(failures.count) packages could not be synced"
-                }
+                statusMessage = summary.statusMessage
             case .failure(let error):
                 statusMessage = error.localizedDescription
             }
