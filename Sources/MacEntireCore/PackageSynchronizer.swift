@@ -722,6 +722,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         var packageListWasStagedDuringUpdate = preservePostFetchCheckoutState
         var packageListIndexWasTouchedDuringUpdate = preservePostFetchCheckoutState
         var packagesDirectoryWasReplaced = false
+        var packageListLeafAfterEditCheck: PackageListLeafSnapshot?
         if !preservePostFetchCheckoutState {
             if !managedPackagesDirectoryIsCurrent(
                 packagesDirectory,
@@ -739,6 +740,12 @@ public final class PackageSynchronizer: @unchecked Sendable {
                         description: "Check for concurrent MacEntire package list edits"
                     )
                     packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
+                    if !packageListWasEditedDuringUpdate {
+                        packageListLeafAfterEditCheck = try packageListLeafSnapshot(
+                            at: packageListURL,
+                            fileManager: fileManager
+                        )
+                    }
                     packageListWasStagedDuringUpdate = packageListStatus.first.map {
                         $0 != " "
                     } ?? false
@@ -757,6 +764,12 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     packageListIndexWasTouchedDuringUpdate = currentIndexEntry != updatedHeadIndexEntry
                 } catch {
                     restorationError = error
+                    if !packageListWasEditedDuringUpdate {
+                        packageListLeafAfterEditCheck = try? packageListLeafSnapshot(
+                            at: packageListURL,
+                            fileManager: fileManager
+                        )
+                    }
                 }
             }
         }
@@ -769,24 +782,18 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ) else {
                     throw PackageSyncError.symbolicLinkPackagesDirectory
                 }
-                if let preservedPackageListLinkDestination, !packageListWasEditedDuringUpdate {
-                    if
-                        fileManager.fileExists(atPath: packageListURL.path)
-                            || isSymbolicLink(at: packageListURL, fileManager: fileManager)
-                    {
-                        try fileManager.removeItem(at: packageListURL)
-                    }
-                    try fileManager.createSymbolicLink(
-                        atPath: packageListURL.path,
-                        withDestinationPath: preservedPackageListLinkDestination
+                if !packageListWasEditedDuringUpdate,
+                   let packageListLeafAfterEditCheck {
+                    let restored = try restorePackageListIfUnchanged(
+                        at: packageListURL,
+                        expectedLeaf: packageListLeafAfterEditCheck,
+                        preservedContents: preservedPackageList,
+                        symbolicLinkDestination: preservedPackageListLinkDestination,
+                        permissions: preservedPackageListPermissions,
+                        fileManager: fileManager
                     )
-                } else if !packageListWasEditedDuringUpdate {
-                    try preservedPackageList.write(to: packageListURL, options: .atomic)
-                    if let preservedPackageListPermissions {
-                        try fileManager.setAttributes(
-                            [.posixPermissions: preservedPackageListPermissions],
-                            ofItemAtPath: packageListURL.path
-                        )
+                    if !restored {
+                        packageListWasEditedDuringUpdate = true
                     }
                 }
                 guard managedPackagesDirectoryIsCurrent(
@@ -1330,6 +1337,80 @@ private func removeReservedCheckoutAfterCloneFailure(
 private struct GitFileEntry: Equatable {
     let mode: String
     let objectID: String
+}
+
+private enum PackageListLeafSnapshot: Equatable {
+    case regular(contents: Data, permissions: NSNumber?)
+    case symbolicLink(destination: String)
+}
+
+private func packageListLeafSnapshot(
+    at url: URL,
+    fileManager: FileManager
+) throws -> PackageListLeafSnapshot {
+    if let destination = try? fileManager.destinationOfSymbolicLink(atPath: url.path) {
+        return .symbolicLink(destination: destination)
+    }
+    let attributes = try fileManager.attributesOfItem(atPath: url.path)
+    return .regular(
+        contents: try Data(contentsOf: url),
+        permissions: attributes[.posixPermissions] as? NSNumber
+    )
+}
+
+private func restorePackageListIfUnchanged(
+    at url: URL,
+    expectedLeaf: PackageListLeafSnapshot,
+    preservedContents: Data,
+    symbolicLinkDestination: String?,
+    permissions: NSNumber?,
+    fileManager: FileManager
+) throws -> Bool {
+    let coordinator = NSFileCoordinator(filePresenter: nil)
+    var coordinationError: NSError?
+    var restoreError: Error?
+    var restored = false
+
+    coordinator.coordinate(
+        writingItemAt: url,
+        options: .forReplacing,
+        error: &coordinationError
+    ) { coordinatedURL in
+        do {
+            guard try packageListLeafSnapshot(
+                at: coordinatedURL,
+                fileManager: fileManager
+            ) == expectedLeaf else {
+                return
+            }
+            if let symbolicLinkDestination {
+                try fileManager.removeItem(at: coordinatedURL)
+                try fileManager.createSymbolicLink(
+                    atPath: coordinatedURL.path,
+                    withDestinationPath: symbolicLinkDestination
+                )
+            } else {
+                try preservedContents.write(to: coordinatedURL, options: .atomic)
+                if let permissions {
+                    try fileManager.setAttributes(
+                        [.posixPermissions: permissions],
+                        ofItemAtPath: coordinatedURL.path
+                    )
+                }
+            }
+            restored = true
+        } catch {
+            restoreError = error
+        }
+    }
+
+    if let restoreError {
+        throw restoreError
+    }
+    if let coordinationError {
+        throw coordinationError
+    }
+    return restored
 }
 
 private struct PackageListRecoverySnapshot {

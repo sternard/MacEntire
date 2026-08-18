@@ -82,6 +82,24 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "newer user edit\n")
     }
 
+    func testMacEntireUpdatePreservesManifestEditMadeAfterConcurrentEditCheck() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            packageListEditAfterStatusCheck: "newer user edit\n"
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        )
+
+        try synchronizer.synchronizeMacEntire()
+
+        XCTAssertEqual(try String(contentsOf: packageList), "newer user edit\n")
+    }
+
     func testMacEntireUpdatePreservesNewBranchManifestWhenBranchChangesDuringFetch() throws {
         let packageList = try writePackageList("original branch customization\n")
         let stagedObjectID = String(repeating: "1", count: 40)
@@ -1715,6 +1733,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let currentBranchOutputAfterFetch: String?
     private let packageListEditDuringFetch: String?
     private let packageListEditDuringUpdate: String?
+    private let packageListEditAfterStatusCheck: String?
     private let packageListLinkDestinationDuringUpdate: String?
     private let packageListModeDuringRestore: Int?
     private let packagesDirectoryReplacementDuringStatus: URL?
@@ -1725,6 +1744,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private var didMerge = false
     private var didFetch = false
     private var didRestorePackageList = false
+    private var didCheckStatus = false
 
     init(
         rootDirectory: URL,
@@ -1742,6 +1762,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         currentBranchOutputAfterFetch: String? = nil,
         packageListEditDuringFetch: String? = nil,
         packageListEditDuringUpdate: String? = nil,
+        packageListEditAfterStatusCheck: String? = nil,
         packageListLinkDestinationDuringUpdate: String? = nil,
         packageListModeDuringRestore: Int? = nil,
         packagesDirectoryReplacementDuringStatus: URL? = nil,
@@ -1763,6 +1784,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.currentBranchOutputAfterFetch = currentBranchOutputAfterFetch
         self.packageListEditDuringFetch = packageListEditDuringFetch
         self.packageListEditDuringUpdate = packageListEditDuringUpdate
+        self.packageListEditAfterStatusCheck = packageListEditAfterStatusCheck
         self.packageListLinkDestinationDuringUpdate = packageListLinkDestinationDuringUpdate
         self.packageListModeDuringRestore = packageListModeDuringRestore
         self.packagesDirectoryReplacementDuringStatus = packagesDirectoryReplacementDuringStatus
@@ -1806,6 +1828,13 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
             return didFetch ? currentBranchOutputAfterFetch ?? currentBranchOutput : currentBranchOutput
         }
         if arguments.contains("ls-files") {
+            if didCheckStatus, let packageListEditAfterStatusCheck {
+                try packageListEditAfterStatusCheck.write(
+                    to: packageListURL,
+                    atomically: true,
+                    encoding: .utf8
+                )
+            }
             return didRestorePackageList ? restoredPackageListIndexEntryOutput : indexEntryOutput
         }
         if arguments.contains("ls-tree") {
@@ -1888,6 +1917,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
             }
         }
         if arguments.contains("status") {
+            didCheckStatus = true
             if let packagesDirectoryReplacementDuringStatus {
                 let packagesDirectory = packageListURL.deletingLastPathComponent()
                 try FileManager.default.moveItem(
