@@ -93,6 +93,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case missingLauncher(String)
     case nonExecutableLauncher(String)
     case macEntireIsNotRepository
+    case macEntireCheckoutChanged
     case packageListRecoveryRequired(reason: String, location: String)
     case packageListRestorationFailed(String, requiresReinstallation: Bool)
     case commandFailed(command: String, output: String)
@@ -120,6 +121,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) scripts/run-app.sh is not executable."
         case .macEntireIsNotRepository:
             return "The configured MacEntire root is not the root of a Git repository."
+        case .macEntireCheckoutChanged:
+            return "The configured MacEntire root changed during the update; update skipped."
         case .packageListRecoveryRequired(let reason, let location):
             return "\(reason) Original package-list changes were saved to \(location)."
         case .packageListRestorationFailed(let detail, _):
@@ -542,36 +545,38 @@ public final class PackageSynchronizer: @unchecked Sendable {
     @discardableResult
     func synchronizeMacEntire() throws -> Bool {
         let rootDirectory = workspace.rootDirectory
-        let packagesDirectory = try openManagedPackagesDirectory(rootDirectory: rootDirectory)
+        let rootDirectoryHandle = try openStableDirectory(rootDirectory)
+        let checkoutURL = rootDirectoryHandle.url
+        let packagesDirectory = try openManagedPackagesDirectory(rootDirectory: checkoutURL)
         let packageListURL = packagesDirectory.url.appendingPathComponent(
             PackageListParser.packageListFilename
         )
         let resolvedTopLevel = try gitRunner.run(
-            ["-C", rootDirectory.path, "rev-parse", "--show-toplevel"],
+            ["-C", checkoutURL.path, "rev-parse", "--show-toplevel"],
             description: "Validate MacEntire checkout"
         )
         let resolvedTopLevelURL = URL(fileURLWithPath: resolvedTopLevel, isDirectory: true)
-        guard resolvedCheckoutPath(resolvedTopLevelURL) == resolvedCheckoutPath(rootDirectory) else {
+        guard rootDirectoryHandle.matches(resolvedTopLevelURL) else {
             throw PackageSyncError.macEntireIsNotRepository
         }
         let originalBranch = try gitRunner.run(
-            ["-C", rootDirectory.path, "branch", "--show-current"],
+            ["-C", checkoutURL.path, "branch", "--show-current"],
             description: "Read MacEntire branch"
         )
         guard !originalBranch.isEmpty else {
             throw PackageSyncError.detachedHead("MacEntire")
         }
         let originalRevision = try gitRunner.run(
-            ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+            ["-C", checkoutURL.path, "rev-parse", "HEAD"],
             description: "Read current MacEntire revision"
         )
         let packageListIndexPath = try gitRunner.run(
-            ["-C", rootDirectory.path, "rev-parse", "--git-path", "index"],
+            ["-C", checkoutURL.path, "rev-parse", "--git-path", "index"],
             description: "Locate MacEntire index"
         )
         let packageListIndexURL = URL(
             fileURLWithPath: packageListIndexPath,
-            relativeTo: rootDirectory
+            relativeTo: checkoutURL
         ).standardizedFileURL
 
         let fileManager = FileManager.default
@@ -595,13 +600,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
         let packageListPath = "Packages/\(PackageListParser.packageListFilename)"
         let preservedIndexEntry = try packageListIndexEntry(
             from: gitRunner.run(
-                ["-C", rootDirectory.path, "ls-files", "--stage", "--", packageListPath],
+                ["-C", checkoutURL.path, "ls-files", "--stage", "--", packageListPath],
                 description: "Preserve MacEntire package list index"
             )
         )
         let headIndexEntry = packageListTreeEntry(
             from: try gitRunner.run(
-                ["-C", rootDirectory.path, "ls-tree", "HEAD", "--", packageListPath],
+                ["-C", checkoutURL.path, "ls-tree", "HEAD", "--", packageListPath],
                 description: "Read committed MacEntire package list"
             )
         )
@@ -609,7 +614,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         let packageListRecovery: PackageListRecoverySnapshot
         do {
             packageListRecovery = try createPackageListRecovery(
-                rootDirectory: rootDirectory,
+                rootDirectory: checkoutURL,
                 gitDirectory: packageListIndexURL.deletingLastPathComponent(),
                 originalBranch: originalBranch,
                 preservedPackageList: preservedPackageList,
@@ -631,7 +636,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         do {
             _ = try gitRunner.run(
                 [
-                    "-C", rootDirectory.path,
+                    "-C", checkoutURL.path,
                     "restore", "--source=HEAD", "--staged", "--worktree", "--", packageListPath
                 ],
                 description: "Prepare MacEntire update"
@@ -639,29 +644,30 @@ public final class PackageSynchronizer: @unchecked Sendable {
             preservePostFetchCheckoutState = true
             do {
                 _ = try gitRunner.run(
-                    ["-C", rootDirectory.path, "fetch"],
+                    ["-C", checkoutURL.path, "fetch"],
                     description: "Fetch MacEntire"
                 )
             } catch {
                 let fetchError = error
                 do {
                     let branchAfterFailedFetch = try gitRunner.run(
-                        ["-C", rootDirectory.path, "branch", "--show-current"],
+                        ["-C", checkoutURL.path, "branch", "--show-current"],
                         description: "Revalidate MacEntire branch after fetch failure"
                     )
                     let revisionAfterFailedFetch = try gitRunner.run(
-                        ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+                        ["-C", checkoutURL.path, "rev-parse", "HEAD"],
                         description: "Revalidate MacEntire revision after fetch failure"
                     )
                     preservePostFetchCheckoutState = branchAfterFailedFetch != originalBranch
                         || revisionAfterFailedFetch != originalRevision
+                        || !rootDirectoryHandle.matches(rootDirectory)
                 } catch {
                     preservePostFetchCheckoutState = true
                 }
                 throw fetchError
             }
             let branchAfterFetch = try gitRunner.run(
-                ["-C", rootDirectory.path, "branch", "--show-current"],
+                ["-C", checkoutURL.path, "branch", "--show-current"],
                 description: "Revalidate MacEntire branch"
             )
             guard !branchAfterFetch.isEmpty else {
@@ -675,22 +681,25 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 )
             }
             let revisionAfterFetch = try gitRunner.run(
-                ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+                ["-C", checkoutURL.path, "rev-parse", "HEAD"],
                 description: "Revalidate MacEntire revision"
             )
             guard revisionAfterFetch == originalRevision else {
                 throw PackageSyncError.localChanges("MacEntire")
             }
+            guard rootDirectoryHandle.matches(rootDirectory) else {
+                throw PackageSyncError.macEntireCheckoutChanged
+            }
             preservePostFetchCheckoutState = false
             _ = try gitRunner.run(
                 [
-                    "-C", rootDirectory.path,
+                    "-C", checkoutURL.path,
                     "merge", "--ff-only", "--no-overwrite-ignore", "\(originalBranch)@{upstream}"
                 ],
                 description: "Update MacEntire"
             )
             updatedRevision = try gitRunner.run(
-                ["-C", rootDirectory.path, "rev-parse", "HEAD"],
+                ["-C", checkoutURL.path, "rev-parse", "HEAD"],
                 description: "Read updated MacEntire revision"
             )
         } catch {
@@ -713,7 +722,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 do {
                     let packageListStatus = try gitRunner.run(
                         [
-                            "--no-optional-locks", "-C", rootDirectory.path,
+                            "--no-optional-locks", "-C", checkoutURL.path,
                             "status", "--porcelain", "--", packageListPath
                         ],
                         description: "Check for concurrent MacEntire package list edits"
@@ -724,13 +733,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     } ?? false
                     let currentIndexEntry = try packageListIndexEntry(
                         from: gitRunner.run(
-                            ["-C", rootDirectory.path, "ls-files", "--stage", "--", packageListPath],
+                            ["-C", checkoutURL.path, "ls-files", "--stage", "--", packageListPath],
                             description: "Check MacEntire package list index"
                         )
                     )
                     let updatedHeadIndexEntry = packageListTreeEntry(
                         from: try gitRunner.run(
-                            ["-C", rootDirectory.path, "ls-tree", "HEAD", "--", packageListPath],
+                            ["-C", checkoutURL.path, "ls-tree", "HEAD", "--", packageListPath],
                             description: "Check updated MacEntire package list"
                         )
                     )
@@ -801,7 +810,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 if let preservedIndexEntry {
                     _ = try gitRunner.run(
                         [
-                            "-C", rootDirectory.path,
+                            "-C", checkoutURL.path,
                             "update-index", "--add", "--cacheinfo",
                             "\(preservedIndexEntry.mode),\(preservedIndexEntry.objectID),\(packageListPath)"
                         ],
@@ -809,7 +818,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     )
                 } else {
                     _ = try gitRunner.run(
-                        ["-C", rootDirectory.path, "update-index", "--force-remove", "--", packageListPath],
+                        ["-C", checkoutURL.path, "update-index", "--force-remove", "--", packageListPath],
                         description: "Restore MacEntire package list index"
                     )
                 }
@@ -835,7 +844,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
         removePackageListRecovery(
             packageListRecovery,
-            rootDirectory: rootDirectory,
+            rootDirectory: checkoutURL,
             fileManager: fileManager
         )
 
@@ -1168,6 +1177,14 @@ final class StableDirectoryHandle: @unchecked Sendable {
         }
         return metadata.st_dev == device && metadata.st_ino == inode
     }
+}
+
+func openStableDirectory(_ directoryURL: URL) throws -> StableDirectoryHandle {
+    let descriptor = open(directoryURL.path, O_RDONLY | O_DIRECTORY)
+    guard descriptor >= 0 else {
+        throw posixError(errno)
+    }
+    return try StableDirectoryHandle(descriptor: descriptor)
 }
 
 func openManagedPackagesDirectory(rootDirectory: URL) throws -> StableDirectoryHandle {

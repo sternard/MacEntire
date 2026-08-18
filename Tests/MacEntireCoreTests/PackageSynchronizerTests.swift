@@ -32,7 +32,14 @@ final class PackageSynchronizerTests: XCTestCase {
 
         XCTAssertTrue(requiresReinstallation)
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
-        XCTAssertEqual(git.commands, [
+        let commands = git.commands.map { arguments in
+            var normalized = arguments
+            if let workingDirectoryIndex = normalized.firstIndex(of: "-C") {
+                normalized[workingDirectoryIndex + 1] = temporaryRoot.path
+            }
+            return normalized
+        }
+        XCTAssertEqual(commands, [
             ["-C", temporaryRoot.path, "rev-parse", "--show-toplevel"],
             ["-C", temporaryRoot.path, "branch", "--show-current"],
             ["-C", temporaryRoot.path, "rev-parse", "HEAD"],
@@ -293,6 +300,52 @@ final class PackageSynchronizerTests: XCTestCase {
                 )
             ),
             "upstream package list\n"
+        )
+    }
+
+    func testMacEntireUpdateDoesNotMergeAfterRootIsReplacedDuringFetch() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let movedRoot = temporaryRoot.deletingLastPathComponent().appendingPathComponent(
+            "Moved-MacEntire-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: movedRoot) }
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            rootDirectoryMoveDestinationDuringFetch: movedRoot
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronizeMacEntire()
+        ) { error in
+            guard case .packageListRecoveryRequired(let reason, let location) =
+                error as? PackageSyncError
+            else {
+                return XCTFail("Expected a package-list recovery error")
+            }
+            XCTAssertEqual(reason, PackageSyncError.macEntireCheckoutChanged.localizedDescription)
+            XCTAssertEqual(
+                try? Data(
+                    contentsOf: URL(fileURLWithPath: location, isDirectory: true)
+                        .appendingPathComponent("packages.txt.worktree")
+                ),
+                Data("custom package list\n".utf8)
+            )
+        }
+
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+        XCTAssertEqual(
+            try String(contentsOf: temporaryRoot.appendingPathComponent("Packages/packages.txt")),
+            "replacement package list\n"
+        )
+        XCTAssertEqual(
+            try String(contentsOf: movedRoot.appendingPathComponent("Packages/packages.txt")),
+            "committed package list\n"
         )
     }
 
@@ -619,11 +672,12 @@ final class PackageSynchronizerTests: XCTestCase {
 
         try synchronizer.synchronizeMacEntire()
 
-        XCTAssertTrue(git.commands.contains([
-            "-C", temporaryRoot.path,
-            "update-index", "--add", "--cacheinfo",
-            "100644,\(stagedObjectID),Packages/packages.txt"
-        ]))
+        XCTAssertTrue(git.commands.contains { arguments in
+            arguments.suffix(4) == [
+                "update-index", "--add", "--cacheinfo",
+                "100644,\(stagedObjectID),Packages/packages.txt"
+            ]
+        })
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
     }
 
@@ -1615,6 +1669,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let packageListLinkDestinationDuringUpdate: String?
     private let packageListModeDuringRestore: Int?
     private let packagesDirectoryReplacementDuringStatus: URL?
+    private let rootDirectoryMoveDestinationDuringFetch: URL?
     private let indexTouchedDuringUpdate: Bool
     private let statusError: PackageSyncError?
     private let statusOutput: String?
@@ -1640,6 +1695,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         packageListLinkDestinationDuringUpdate: String? = nil,
         packageListModeDuringRestore: Int? = nil,
         packagesDirectoryReplacementDuringStatus: URL? = nil,
+        rootDirectoryMoveDestinationDuringFetch: URL? = nil,
         indexTouchedDuringUpdate: Bool = false,
         statusError: PackageSyncError? = nil,
         statusOutput: String? = nil
@@ -1659,6 +1715,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.packageListLinkDestinationDuringUpdate = packageListLinkDestinationDuringUpdate
         self.packageListModeDuringRestore = packageListModeDuringRestore
         self.packagesDirectoryReplacementDuringStatus = packagesDirectoryReplacementDuringStatus
+        self.rootDirectoryMoveDestinationDuringFetch = rootDirectoryMoveDestinationDuringFetch
         self.indexTouchedDuringUpdate = indexTouchedDuringUpdate
         self.statusError = statusError
         self.statusOutput = statusOutput
@@ -1686,7 +1743,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
             if !FileManager.default.fileExists(atPath: indexURL.path) {
                 try Data("test index".utf8).write(to: indexURL, options: .atomic)
             }
-            return indexURL.path
+            return ".git/index"
         }
         if arguments.contains("rev-parse") {
             return rootDirectory.path
@@ -1722,6 +1779,25 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
             }
             if let packageListEditDuringFetch {
                 try packageListEditDuringFetch.write(
+                    to: packageListURL,
+                    atomically: true,
+                    encoding: .utf8
+                )
+            }
+            if let rootDirectoryMoveDestinationDuringFetch {
+                try FileManager.default.moveItem(
+                    at: rootDirectory,
+                    to: rootDirectoryMoveDestinationDuringFetch
+                )
+                try FileManager.default.createDirectory(
+                    at: rootDirectory.appendingPathComponent(".git", isDirectory: true),
+                    withIntermediateDirectories: true
+                )
+                try FileManager.default.createDirectory(
+                    at: rootDirectory.appendingPathComponent("Packages", isDirectory: true),
+                    withIntermediateDirectories: true
+                )
+                try "replacement package list\n".write(
                     to: packageListURL,
                     atomically: true,
                     encoding: .utf8
