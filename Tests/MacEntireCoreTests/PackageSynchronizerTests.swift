@@ -471,6 +471,32 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
     }
 
+    func testMacEntireUpdateRestoresManifestWorktreePermissions() throws {
+        let packageList = try writePackageList("custom package list\n")
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: packageList.path
+        )
+        let stagedObjectID = String(repeating: "1", count: 40)
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            indexEntryOutput: "100755 \(stagedObjectID) 0\tPackages/packages.txt",
+            headEntryOutput: "100644 blob \(String(repeating: "0", count: 40))\tPackages/packages.txt",
+            packageListModeDuringRestore: 0o644
+        )
+
+        try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeMacEntire()
+
+        let attributes = try FileManager.default.attributesOfItem(atPath: packageList.path)
+        let permissions = try XCTUnwrap(attributes[.posixPermissions] as? NSNumber).intValue
+        XCTAssertEqual(permissions & 0o777, 0o755)
+    }
+
     func testMacEntireUpdateRestoresCustomizedPackageListWhenPullFails() throws {
         let packageList = try writePackageList("custom package list\n")
         let git = MacEntireUpdateGitRunner(
@@ -1147,6 +1173,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let packageListEditDuringFetch: String?
     private let packageListEditDuringUpdate: String?
     private let packageListLinkDestinationDuringUpdate: String?
+    private let packageListModeDuringRestore: Int?
     private let indexTouchedDuringUpdate: Bool
     private let statusError: PackageSyncError?
     private let statusOutput: String?
@@ -1168,6 +1195,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         packageListEditDuringFetch: String? = nil,
         packageListEditDuringUpdate: String? = nil,
         packageListLinkDestinationDuringUpdate: String? = nil,
+        packageListModeDuringRestore: Int? = nil,
         indexTouchedDuringUpdate: Bool = false,
         statusError: PackageSyncError? = nil,
         statusOutput: String? = nil
@@ -1184,6 +1212,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.packageListEditDuringFetch = packageListEditDuringFetch
         self.packageListEditDuringUpdate = packageListEditDuringUpdate
         self.packageListLinkDestinationDuringUpdate = packageListLinkDestinationDuringUpdate
+        self.packageListModeDuringRestore = packageListModeDuringRestore
         self.indexTouchedDuringUpdate = indexTouchedDuringUpdate
         self.statusError = statusError
         self.statusOutput = statusOutput
@@ -1231,6 +1260,12 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
                 atomically: true,
                 encoding: .utf8
             )
+            if let packageListModeDuringRestore {
+                try FileManager.default.setAttributes(
+                    [.posixPermissions: packageListModeDuringRestore],
+                    ofItemAtPath: packageListURL.path
+                )
+            }
         }
         if arguments.contains("fetch") {
             didFetch = true

@@ -507,6 +507,13 @@ public final class PackageSynchronizer: @unchecked Sendable {
         let preservedPackageListLinkDestination = try? fileManager.destinationOfSymbolicLink(
             atPath: workspace.packageListURL.path
         )
+        let preservedPackageListPermissions: NSNumber?
+        if preservedPackageListLinkDestination == nil {
+            let attributes = try fileManager.attributesOfItem(atPath: workspace.packageListURL.path)
+            preservedPackageListPermissions = attributes[.posixPermissions] as? NSNumber
+        } else {
+            preservedPackageListPermissions = nil
+        }
         let preservedPackageList: Data
         do {
             preservedPackageList = try Data(contentsOf: workspace.packageListURL)
@@ -667,6 +674,12 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 )
             } else if !packageListWasEditedDuringUpdate {
                 try preservedPackageList.write(to: workspace.packageListURL, options: .atomic)
+                if let preservedPackageListPermissions {
+                    try fileManager.setAttributes(
+                        [.posixPermissions: preservedPackageListPermissions],
+                        ofItemAtPath: workspace.packageListURL.path
+                    )
+                }
             }
         } catch {
             restorationError = error
