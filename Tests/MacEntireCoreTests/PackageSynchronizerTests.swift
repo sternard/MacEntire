@@ -51,7 +51,9 @@ final class PackageSynchronizerTests: XCTestCase {
             [
                 "--no-optional-locks", "-C", temporaryRoot.path,
                 "status", "--porcelain", "--", "Packages/packages.txt"
-            ]
+            ],
+            ["-C", temporaryRoot.path, "ls-files", "--stage", "--", "Packages/packages.txt"],
+            ["-C", temporaryRoot.path, "ls-tree", "HEAD", "--", "Packages/packages.txt"]
         ])
     }
 
@@ -252,7 +254,7 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "newer staged edit\n")
     }
 
-    func testMacEntireUpdatePreservesManifestUnstagedDuringUpdate() throws {
+    func testMacEntireUpdateRestoresStagedManifestAfterUnrelatedIndexEdit() throws {
         let packageList = try writePackageList("custom package list\n")
         let stagedObjectID = String(repeating: "1", count: 40)
         let git = MacEntireUpdateGitRunner(
@@ -271,7 +273,7 @@ final class PackageSynchronizerTests: XCTestCase {
             gitRunner: git
         ).synchronizeMacEntire()
 
-        XCTAssertFalse(git.commands.contains { arguments in
+        XCTAssertTrue(git.commands.contains { arguments in
             arguments.contains("update-index") && arguments.contains {
                 $0.contains(stagedObjectID)
             }
@@ -1222,6 +1224,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let statusOutput: String?
     private var didMerge = false
     private var didFetch = false
+    private var didRestorePackageList = false
 
     init(
         rootDirectory: URL,
@@ -1292,12 +1295,13 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
             return didFetch ? currentBranchOutputAfterFetch ?? currentBranchOutput : currentBranchOutput
         }
         if arguments.contains("ls-files") {
-            return indexEntryOutput
+            return didRestorePackageList ? restoredPackageListIndexEntryOutput : indexEntryOutput
         }
         if arguments.contains("ls-tree") {
             return headEntryOutput
         }
         if arguments.contains("restore") {
+            didRestorePackageList = true
             try "committed package list\n".write(
                 to: packageListURL,
                 atomically: true,
@@ -1362,6 +1366,14 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
             }
         }
         return ""
+    }
+
+    private var restoredPackageListIndexEntryOutput: String {
+        let metadata = headEntryOutput.split(whereSeparator: \.isWhitespace)
+        guard metadata.count >= 3 else {
+            return ""
+        }
+        return "\(metadata[0]) \(metadata[2]) 0\tPackages/packages.txt"
     }
 }
 

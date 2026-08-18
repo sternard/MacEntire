@@ -602,8 +602,6 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 requiresReinstallation: false
             )
         }
-        var packageListIndexTokenAfterLastUpdate: FileChangeToken?
-        var packageListIndexWasTouchedDuringUpdate = false
         var preservePostFetchCheckoutState = false
         var updateError: Error?
         var updatedRevision = originalRevision
@@ -614,10 +612,6 @@ public final class PackageSynchronizer: @unchecked Sendable {
                     "restore", "--source=HEAD", "--staged", "--worktree", "--", packageListPath
                 ],
                 description: "Prepare MacEntire update"
-            )
-            packageListIndexTokenAfterLastUpdate = try fileChangeToken(
-                at: packageListIndexURL,
-                fileManager: fileManager
             )
             _ = try gitRunner.run(
                 ["-C", rootDirectory.path, "fetch"],
@@ -646,22 +640,12 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 throw PackageSyncError.localChanges("MacEntire")
             }
             preservePostFetchCheckoutState = false
-            if let packageListIndexTokenAfterLastUpdate {
-                packageListIndexWasTouchedDuringUpdate = try fileChangeToken(
-                    at: packageListIndexURL,
-                    fileManager: fileManager
-                ) != packageListIndexTokenAfterLastUpdate
-            }
             _ = try gitRunner.run(
                 [
                     "-C", rootDirectory.path,
                     "merge", "--ff-only", "--no-overwrite-ignore", "\(originalBranch)@{upstream}"
                 ],
                 description: "Update MacEntire"
-            )
-            packageListIndexTokenAfterLastUpdate = try fileChangeToken(
-                at: packageListIndexURL,
-                fileManager: fileManager
             )
             updatedRevision = try gitRunner.run(
                 ["-C", rootDirectory.path, "rev-parse", "HEAD"],
@@ -674,6 +658,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         var restorationError: Error?
         var packageListWasEditedDuringUpdate = preservePostFetchCheckoutState
         var packageListWasStagedDuringUpdate = preservePostFetchCheckoutState
+        var packageListIndexWasTouchedDuringUpdate = preservePostFetchCheckoutState
         if !preservePostFetchCheckoutState {
             do {
                 let packageListStatus = try gitRunner.run(
@@ -687,20 +672,21 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 packageListWasStagedDuringUpdate = packageListStatus.first.map {
                     $0 != " "
                 } ?? false
+                let currentIndexEntry = try packageListIndexEntry(
+                    from: gitRunner.run(
+                        ["-C", rootDirectory.path, "ls-files", "--stage", "--", packageListPath],
+                        description: "Check MacEntire package list index"
+                    )
+                )
+                let updatedHeadIndexEntry = packageListTreeEntry(
+                    from: try gitRunner.run(
+                        ["-C", rootDirectory.path, "ls-tree", "HEAD", "--", packageListPath],
+                        description: "Check updated MacEntire package list"
+                    )
+                )
+                packageListIndexWasTouchedDuringUpdate = currentIndexEntry != updatedHeadIndexEntry
             } catch {
                 restorationError = error
-            }
-        }
-        if let packageListIndexTokenAfterLastUpdate, !preservePostFetchCheckoutState {
-            do {
-                let currentPackageListIndexToken = try fileChangeToken(
-                    at: packageListIndexURL,
-                    fileManager: fileManager
-                )
-                packageListIndexWasTouchedDuringUpdate = packageListIndexWasTouchedDuringUpdate
-                    || currentPackageListIndexToken != packageListIndexTokenAfterLastUpdate
-            } catch {
-                restorationError = restorationError ?? error
             }
         }
 
@@ -1059,24 +1045,6 @@ private struct GitFileEntry: Equatable {
 private struct PackageListRecoverySnapshot {
     let directoryURL: URL
     let indexReference: String?
-}
-
-private struct FileChangeToken: Equatable {
-    let modificationDate: Date?
-    let size: UInt64?
-    let systemFileNumber: UInt64?
-}
-
-private func fileChangeToken(
-    at url: URL,
-    fileManager: FileManager
-) throws -> FileChangeToken {
-    let attributes = try fileManager.attributesOfItem(atPath: url.path)
-    return FileChangeToken(
-        modificationDate: attributes[.modificationDate] as? Date,
-        size: (attributes[.size] as? NSNumber)?.uint64Value,
-        systemFileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
-    )
 }
 
 private func packageListIndexEntry(from output: String) throws -> GitFileEntry? {
