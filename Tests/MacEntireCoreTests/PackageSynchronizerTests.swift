@@ -373,6 +373,49 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: externalPackageList), "custom package list\n")
     }
 
+    func testMacEntireUpdatePreservesSymlinkRetargetedDuringUpdate() throws {
+        let packagesDirectory = temporaryRoot.appendingPathComponent("Packages", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: packagesDirectory,
+            withIntermediateDirectories: true
+        )
+        let originalPackageList = temporaryRoot.appendingPathComponent("custom-packages.txt")
+        try "custom package list\n".write(
+            to: originalPackageList,
+            atomically: true,
+            encoding: .utf8
+        )
+        let newerPackageList = temporaryRoot.appendingPathComponent("newer-packages.txt")
+        try "newer package list\n".write(
+            to: newerPackageList,
+            atomically: true,
+            encoding: .utf8
+        )
+        let packageList = packagesDirectory.appendingPathComponent("packages.txt")
+        try FileManager.default.createSymbolicLink(
+            atPath: packageList.path,
+            withDestinationPath: "../custom-packages.txt"
+        )
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            packageListLinkDestinationDuringUpdate: "../newer-packages.txt",
+            statusOutput: " T Packages/packages.txt"
+        )
+
+        try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeMacEntire()
+
+        XCTAssertEqual(
+            try FileManager.default.destinationOfSymbolicLink(atPath: packageList.path),
+            "../newer-packages.txt"
+        )
+        XCTAssertEqual(try String(contentsOf: packageList), "newer package list\n")
+    }
+
     func testMacEntireUpdateRefusesToPullFromParentRepository() throws {
         _ = try writePackageList("custom package list\n")
         let parentRoot = temporaryRoot.deletingLastPathComponent()
@@ -880,6 +923,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let originalRevision: String
     private let updatedRevision: String
     private let packageListEditDuringUpdate: String?
+    private let packageListLinkDestinationDuringUpdate: String?
     private let statusError: PackageSyncError?
     private let statusOutput: String?
     private var didMerge = false
@@ -894,6 +938,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         originalRevision: String = "old-revision",
         updatedRevision: String = "new-revision",
         packageListEditDuringUpdate: String? = nil,
+        packageListLinkDestinationDuringUpdate: String? = nil,
         statusError: PackageSyncError? = nil,
         statusOutput: String? = nil
     ) {
@@ -904,6 +949,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.originalRevision = originalRevision
         self.updatedRevision = updatedRevision
         self.packageListEditDuringUpdate = packageListEditDuringUpdate
+        self.packageListLinkDestinationDuringUpdate = packageListLinkDestinationDuringUpdate
         self.statusError = statusError
         self.statusOutput = statusOutput
         let unchangedObjectID = String(repeating: "0", count: 40)
@@ -942,6 +988,18 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
                     to: packageListURL,
                     atomically: true,
                     encoding: .utf8
+                )
+            }
+            if let packageListLinkDestinationDuringUpdate {
+                if
+                    FileManager.default.fileExists(atPath: packageListURL.path)
+                        || isSymbolicLink(at: packageListURL)
+                {
+                    try FileManager.default.removeItem(at: packageListURL)
+                }
+                try FileManager.default.createSymbolicLink(
+                    atPath: packageListURL.path,
+                    withDestinationPath: packageListLinkDestinationDuringUpdate
                 )
             }
             if let updateError {

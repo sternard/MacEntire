@@ -509,19 +509,17 @@ public final class PackageSynchronizer: @unchecked Sendable {
         var restorationError: Error?
         var packageListWasEditedDuringUpdate = false
         var packageListWasStagedDuringUpdate = false
-        if preservedPackageListLinkDestination == nil {
-            do {
-                let packageListStatus = try gitRunner.run(
-                    ["-C", rootDirectory.path, "status", "--porcelain", "--", packageListPath],
-                    description: "Check for concurrent MacEntire package list edits"
-                )
-                packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
-                packageListWasStagedDuringUpdate = packageListStatus.first.map {
-                    $0 != " "
-                } ?? false
-            } catch {
-                restorationError = error
-            }
+        do {
+            let packageListStatus = try gitRunner.run(
+                ["-C", rootDirectory.path, "status", "--porcelain", "--", packageListPath],
+                description: "Check for concurrent MacEntire package list edits"
+            )
+            packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
+            packageListWasStagedDuringUpdate = packageListStatus.first.map {
+                $0 != " "
+            } ?? false
+        } catch {
+            restorationError = error
         }
 
         do {
@@ -529,7 +527,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 at: workspace.packagesDirectory,
                 withIntermediateDirectories: true
             )
-            if let preservedPackageListLinkDestination {
+            if let preservedPackageListLinkDestination, !packageListWasEditedDuringUpdate {
                 if
                     fileManager.fileExists(atPath: workspace.packageListURL.path)
                         || isSymbolicLink(at: workspace.packageListURL, fileManager: fileManager)
