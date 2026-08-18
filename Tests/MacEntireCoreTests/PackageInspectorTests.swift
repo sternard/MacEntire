@@ -22,10 +22,8 @@ final class PackageInspectorTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false)
         )
         let gitRunner = InspectionGitRunner()
         let inspector = PackageInspector(
@@ -59,10 +57,8 @@ final class PackageInspectorTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false)
         )
         let gitRunner = BlockingInspectionGitRunner()
         let inspector = PackageInspector(
@@ -103,10 +99,8 @@ final class PackageInspectorTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false)
         )
         let gitRunner = BlockingInspectionGitRunner()
         let inspector = PackageInspector(
@@ -146,10 +140,8 @@ final class PackageInspectorTests: XCTestCase {
             atomically: true,
             encoding: .utf8
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh", isDirectory: false)
         )
         let gitRunner = BlockingInspectionGitRunner(firstTopLevelResult: temporaryRoot.path)
         let inspector = PackageInspector(
@@ -176,6 +168,14 @@ final class PackageInspectorTests: XCTestCase {
         XCTAssertEqual(regularPackages, forcedPackages)
         XCTAssertEqual(gitRunner.topLevelCallCount, 2)
     }
+}
+
+private func writeExecutableLauncher(at url: URL) throws {
+    try "#!/usr/bin/env bash\n".write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: url.path
+    )
 }
 
 private final class InspectionGitRunner: GitRunning, @unchecked Sendable {

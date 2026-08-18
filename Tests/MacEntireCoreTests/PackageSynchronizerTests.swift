@@ -511,10 +511,8 @@ final class PackageSynchronizerTests: XCTestCase {
                 at: directory.appendingPathComponent("scripts", isDirectory: true),
                 withIntermediateDirectories: true
             )
-            try "#!/usr/bin/env bash\n".write(
-                to: directory.appendingPathComponent("scripts/run-app.sh"),
-                atomically: true,
-                encoding: .utf8
+            try self.writeExecutableLauncher(
+                at: directory.appendingPathComponent("scripts/run-app.sh")
             )
         }
         let synchronizer = PackageSynchronizer(
@@ -680,10 +678,8 @@ final class PackageSynchronizerTests: XCTestCase {
             at: physicalDirectory.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: physicalDirectory.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            at: physicalDirectory.appendingPathComponent("scripts/run-app.sh")
         )
         try FileManager.default.createSymbolicLink(at: linkedRoot, withDestinationURL: physicalRoot)
         let linkedDirectory = linkedRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
@@ -794,6 +790,25 @@ final class PackageSynchronizerTests: XCTestCase {
         }
     }
 
+    func testRefusesNonExecutableLauncher() throws {
+        let package = try makeInstalledPackage()
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: package.launcherURL.path
+        )
+        let synchronizer = PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: FakeGitRunner(statusOutput: "")
+        )
+
+        XCTAssertThrowsError(try synchronizer.synchronize(package)) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .nonExecutableLauncher("Example-App")
+            )
+        }
+    }
+
     private func makeInstalledPackage(branch: String? = nil) throws -> PackageDefinition {
         let directory = temporaryRoot.appendingPathComponent("Packages/Example-App", isDirectory: true)
         try FileManager.default.createDirectory(
@@ -804,10 +819,8 @@ final class PackageSynchronizerTests: XCTestCase {
             at: directory.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: directory.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableLauncher(
+            at: directory.appendingPathComponent("scripts/run-app.sh")
         )
 
         return PackageDefinition(
@@ -816,6 +829,14 @@ final class PackageSynchronizerTests: XCTestCase {
             displayName: "Example App",
             branch: branch,
             directoryURL: directory
+        )
+    }
+
+    private func writeExecutableLauncher(at url: URL) throws {
+        try "#!/usr/bin/env bash\n".write(to: url, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o755],
+            ofItemAtPath: url.path
         )
     }
 

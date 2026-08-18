@@ -76,6 +76,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case detachedHead(String)
     case localChanges(String)
     case missingLauncher(String)
+    case nonExecutableLauncher(String)
     case macEntireIsNotRepository
     case packageListRestorationFailed(String)
     case commandFailed(command: String, output: String)
@@ -99,6 +100,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) has local changes; update skipped."
         case .missingLauncher(let name):
             return "\(name) does not contain scripts/run-app.sh."
+        case .nonExecutableLauncher(let name):
+            return "\(name) scripts/run-app.sh is not executable."
         case .macEntireIsNotRepository:
             return "The configured MacEntire root is not the root of a Git repository."
         case .packageListRestorationFailed(let detail):
@@ -705,6 +708,9 @@ public final class PackageSynchronizer: @unchecked Sendable {
             !launcherIsDirectory.boolValue
         else {
             throw PackageSyncError.missingLauncher(package.repositoryName)
+        }
+        guard FileManager.default.isExecutableFile(atPath: package.launcherURL.path) else {
+            throw PackageSyncError.nonExecutableLauncher(package.repositoryName)
         }
     }
 }

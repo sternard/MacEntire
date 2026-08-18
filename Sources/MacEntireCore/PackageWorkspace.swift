@@ -198,6 +198,13 @@ public struct PackageWorkspace: Sendable {
                     state: .unavailable("Missing scripts/run-app.sh")
                 )
             }
+            guard fileManager.isExecutableFile(atPath: definition.launcherURL.path) else {
+                let error = PackageSyncError.nonExecutableLauncher(definition.repositoryName)
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
 
             let resolvedTopLevel: String
             do {

@@ -167,10 +167,8 @@ final class PackageWorkspaceTests: XCTestCase {
             at: repository.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
         )
 
         let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
@@ -178,6 +176,30 @@ final class PackageWorkspaceTests: XCTestCase {
         )
 
         XCTAssertEqual(packages.first?.state, .ready)
+    }
+
+    func testReportsNonExecutableLauncherAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent("Packages/Storage-Assistant", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent(".git", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        let launcher = repository.appendingPathComponent("scripts/run-app.sh")
+        try "#!/usr/bin/env bash\n".write(to: launcher, atomically: true, encoding: .utf8)
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner()
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable("Storage-Assistant scripts/run-app.sh is not executable.")
+        )
     }
 
     func testReportsRepositoryWithUnexpectedOriginAsUnavailable() throws {
@@ -191,10 +213,8 @@ final class PackageWorkspaceTests: XCTestCase {
             at: repository.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
         )
 
         let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
@@ -223,10 +243,8 @@ final class PackageWorkspaceTests: XCTestCase {
             at: repository.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
         )
 
         let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
@@ -252,10 +270,8 @@ final class PackageWorkspaceTests: XCTestCase {
             at: repository.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
         )
         try "https://github.com/sternard/Storage-Assistant".write(
             to: packagesDirectory.appendingPathComponent("packages.txt"),
@@ -284,10 +300,8 @@ final class PackageWorkspaceTests: XCTestCase {
             at: externalDirectory.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: externalDirectory.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableWorkspaceLauncher(
+            at: externalDirectory.appendingPathComponent("scripts/run-app.sh")
         )
         try FileManager.default.createSymbolicLink(at: checkoutDirectory, withDestinationURL: externalDirectory)
 
@@ -339,10 +353,8 @@ final class PackageWorkspaceTests: XCTestCase {
             at: repository.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
         )
 
         let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
@@ -366,10 +378,8 @@ final class PackageWorkspaceTests: XCTestCase {
             at: repository.appendingPathComponent("scripts", isDirectory: true),
             withIntermediateDirectories: true
         )
-        try "#!/usr/bin/env bash\n".write(
-            to: repository.appendingPathComponent("scripts/run-app.sh"),
-            atomically: true,
-            encoding: .utf8
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
         )
 
         let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
@@ -403,6 +413,14 @@ final class PackageWorkspaceTests: XCTestCase {
             encoding: .utf8
         )
     }
+}
+
+private func writeExecutableWorkspaceLauncher(at url: URL) throws {
+    try "#!/usr/bin/env bash\n".write(to: url, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o755],
+        ofItemAtPath: url.path
+    )
 }
 
 private struct WorkspaceGitRunner: GitRunning {
