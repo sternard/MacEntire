@@ -508,10 +508,11 @@ public final class PackageSynchronizer: @unchecked Sendable {
 
         let definitions: [PackageDefinition]
         let packageListErrorMessage: String?
-        if case .packageListRecoveryRequired = macEntireSyncError {
+        switch macEntireSyncError {
+        case .packageListRecoveryRequired, .packageListRestorationFailed:
             definitions = []
             packageListErrorMessage = nil
-        } else {
+        default:
             do {
                 definitions = try workspace.definitions()
                 packageListErrorMessage = nil
