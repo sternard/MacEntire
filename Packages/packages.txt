@@ -1,0 +1,5 @@
+https://github.com/sternard/Storage-Assistant
+https://github.com/sternard/HEIC-to-JPEG
+https://github.com/sternard/Screen-Swap
+https://github.com/sternard/Caffeine-Plus
+https://github.com/sternard/Doc-Combiner

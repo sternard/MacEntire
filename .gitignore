@@ -1,0 +1,7 @@
+.build/
+.DS_Store
+
+# packages.txt is shared. ignore.txt and managed repositories stay local.
+Packages/*
+!Packages/.gitkeep
+!Packages/packages.txt
