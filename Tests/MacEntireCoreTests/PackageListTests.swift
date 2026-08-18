@@ -122,6 +122,22 @@ final class PackageListTests: XCTestCase {
         }
     }
 
+    func testRejectsGitMetadataDirectoryAsDestination() {
+        let entries = [
+            "https://github.com/sternard/.git",
+            "https://github.com/sternard/.git.git",
+            "https://github.com/sternard/.GIT"
+        ]
+
+        for entry in entries {
+            XCTAssertThrowsError(
+                try PackageListParser().parse(entry, packagesDirectory: packagesDirectory)
+            ) { error in
+                XCTAssertEqual(error as? PackageListError, .invalidEntry(line: 1, value: entry))
+            }
+        }
+    }
+
     func testRejectsDuplicateDestinationNames() {
         let contents = """
         https://github.com/first/Example-App

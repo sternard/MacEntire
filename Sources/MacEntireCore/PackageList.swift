@@ -51,6 +51,7 @@ public struct PackageListParser: Sendable {
     static let packageListFilename = "packages.txt"
     private static let reservedPackageDirectoryNames: Set<String> = [
         packageListFilename,
+        ".git",
         ".gitkeep"
     ]
 
