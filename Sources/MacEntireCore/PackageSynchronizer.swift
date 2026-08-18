@@ -172,6 +172,21 @@ public enum PackageSyncError: LocalizedError, Equatable {
 
 public protocol GitRunning: Sendable {
     func run(_ arguments: [String], description: String) throws -> String
+    func run(
+        _ arguments: [String],
+        environment: [String: String],
+        description: String
+    ) throws -> String
+}
+
+public extension GitRunning {
+    func run(
+        _ arguments: [String],
+        environment: [String: String],
+        description: String
+    ) throws -> String {
+        try run(arguments, description: description)
+    }
 }
 
 public struct ProcessGitRunner: GitRunning, Sendable {
@@ -209,6 +224,14 @@ public struct ProcessGitRunner: GitRunning, Sendable {
     }
 
     public func run(_ arguments: [String], description: String) throws -> String {
+        try run(arguments, environment: [:], description: description)
+    }
+
+    public func run(
+        _ arguments: [String],
+        environment environmentOverrides: [String: String],
+        description: String
+    ) throws -> String {
         let standardOutputPipe = Pipe()
         let standardErrorPipe = Pipe()
         let standardOutput = BoundedProcessOutput(maximumBytes: Self.maximumCapturedOutputBytes)
@@ -246,6 +269,9 @@ public struct ProcessGitRunner: GitRunning, Sendable {
 
         var environment = ProcessInfo.processInfo.environment
         environment["GIT_TERMINAL_PROMPT"] = "0"
+        for (key, value) in environmentOverrides {
+            environment[key] = value
+        }
         let processIdentifier: pid_t
         do {
             processIdentifier = try spawnProcessGroup(
@@ -727,6 +753,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
         var packageListWasEditedDuringUpdate = preservePostFetchCheckoutState
         var packageListWasStagedDuringUpdate = preservePostFetchCheckoutState
         var packageListIndexWasTouchedDuringUpdate = preservePostFetchCheckoutState
+        var packageListIndexEntryAfterUpdate: GitFileEntry?
         var packagesDirectoryWasReplaced = false
         var packageListLeafAfterEditCheck: PackageListLeafSnapshot?
         if !preservePostFetchCheckoutState {
@@ -768,6 +795,7 @@ public final class PackageSynchronizer: @unchecked Sendable {
                         )
                     )
                     packageListIndexWasTouchedDuringUpdate = currentIndexEntry != updatedHeadIndexEntry
+                    packageListIndexEntryAfterUpdate = currentIndexEntry
                 } catch {
                     restorationError = error
                     if !packageListWasEditedDuringUpdate {
@@ -831,21 +859,14 @@ public final class PackageSynchronizer: @unchecked Sendable {
             !packageListIndexWasTouchedDuringUpdate
         {
             do {
-                if let preservedIndexEntry {
-                    _ = try gitRunner.run(
-                        [
-                            "-C", checkoutURL.path,
-                            "update-index", "--add", "--cacheinfo",
-                            "\(preservedIndexEntry.mode),\(preservedIndexEntry.objectID),\(packageListPath)"
-                        ],
-                        description: "Restore MacEntire package list index"
-                    )
-                } else {
-                    _ = try gitRunner.run(
-                        ["-C", checkoutURL.path, "update-index", "--force-remove", "--", packageListPath],
-                        description: "Restore MacEntire package list index"
-                    )
-                }
+                _ = try restorePackageListIndexIfUnchanged(
+                    rootDirectory: checkoutURL,
+                    indexURL: packageListIndexURL,
+                    packageListPath: packageListPath,
+                    expectedCurrentEntry: packageListIndexEntryAfterUpdate,
+                    preservedEntry: preservedIndexEntry,
+                    gitRunner: gitRunner
+                )
             } catch {
                 restorationError = restorationError ?? error
             }
@@ -1491,6 +1512,94 @@ private func restorePackageListIfUnchanged(
         throw coordinationError
     }
     return restored
+}
+
+private func restorePackageListIndexIfUnchanged(
+    rootDirectory: URL,
+    indexURL: URL,
+    packageListPath: String,
+    expectedCurrentEntry: GitFileEntry?,
+    preservedEntry: GitFileEntry?,
+    gitRunner: any GitRunning
+) throws -> Bool {
+    let indexLockURL = indexURL.appendingPathExtension("lock")
+    var indexLockDescriptor = open(
+        indexLockURL.path,
+        O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
+        0o600
+    )
+    guard indexLockDescriptor >= 0 else {
+        throw posixError(errno)
+    }
+
+    var removeIndexLock = true
+    defer {
+        if indexLockDescriptor >= 0 {
+            close(indexLockDescriptor)
+        }
+        if removeIndexLock {
+            unlink(indexLockURL.path)
+        }
+    }
+
+    let currentEntry = try packageListIndexEntry(
+        from: gitRunner.run(
+            ["-C", rootDirectory.path, "ls-files", "--stage", "--", packageListPath],
+            description: "Recheck MacEntire package list index"
+        )
+    )
+    guard currentEntry == expectedCurrentEntry else {
+        return false
+    }
+
+    let indexContents = try Data(contentsOf: indexURL)
+    try indexContents.withUnsafeBytes { buffer in
+        var offset = 0
+        while offset < buffer.count {
+            guard let baseAddress = buffer.baseAddress else {
+                return
+            }
+            let written = Darwin.write(
+                indexLockDescriptor,
+                baseAddress.advanced(by: offset),
+                buffer.count - offset
+            )
+            guard written > 0 else {
+                throw posixError(written < 0 ? errno : EIO)
+            }
+            offset += written
+        }
+    }
+    guard close(indexLockDescriptor) == 0 else {
+        indexLockDescriptor = -1
+        throw posixError(errno)
+    }
+    indexLockDescriptor = -1
+
+    let updateArguments: [String]
+    if let preservedEntry {
+        updateArguments = [
+            "-C", rootDirectory.path,
+            "update-index", "--add", "--cacheinfo",
+            "\(preservedEntry.mode),\(preservedEntry.objectID),\(packageListPath)"
+        ]
+    } else {
+        updateArguments = [
+            "-C", rootDirectory.path,
+            "update-index", "--force-remove", "--", packageListPath
+        ]
+    }
+    _ = try gitRunner.run(
+        updateArguments,
+        environment: ["GIT_INDEX_FILE": indexLockURL.path],
+        description: "Restore MacEntire package list index"
+    )
+
+    guard rename(indexLockURL.path, indexURL.path) == 0 else {
+        throw posixError(errno)
+    }
+    removeIndexLock = false
+    return true
 }
 
 private struct PackageListRecoverySnapshot {

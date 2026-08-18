@@ -526,6 +526,32 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(try String(contentsOf: packageList), "newer unstaged edit\n")
     }
 
+    func testMacEntireUpdatePreservesIndexEditStagedBeforeFinalRestoration() throws {
+        let packageList = try writePackageList("custom package list\n")
+        let originalStagedObjectID = String(repeating: "1", count: 40)
+        let concurrentlyStagedObjectID = String(repeating: "2", count: 40)
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            indexEntryOutput: "100644 \(originalStagedObjectID) 0\tPackages/packages.txt",
+            headEntryOutput: "100644 blob \(String(repeating: "0", count: 40))\tPackages/packages.txt",
+            finalIndexEntryOutput: "100644 \(concurrentlyStagedObjectID) 0\tPackages/packages.txt"
+        )
+
+        try PackageSynchronizer(
+            workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+            gitRunner: git
+        ).synchronizeMacEntire()
+
+        XCTAssertFalse(git.commands.contains { arguments in
+            arguments.contains("update-index") && arguments.contains {
+                $0.contains(originalStagedObjectID)
+            }
+        })
+        XCTAssertEqual(try String(contentsOf: packageList), "custom package list\n")
+    }
+
     func testMacEntireUpdateDoesNotRequireReinstallationWhenRevisionIsUnchanged() throws {
         let packageList = try writePackageList("custom package list\n")
         let git = MacEntireUpdateGitRunner(
@@ -1923,12 +1949,14 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let packagesDirectoryReplacementDuringStatus: URL?
     private let rootDirectoryMoveDestinationDuringFetch: URL?
     private let indexTouchedDuringUpdate: Bool
+    private let finalIndexEntryOutput: String?
     private let statusError: PackageSyncError?
     private let statusOutput: String?
     private var didMerge = false
     private var didFetch = false
     private var didRestorePackageList = false
     private var didCheckStatus = false
+    private var restoredIndexReadCount = 0
 
     init(
         rootDirectory: URL,
@@ -1952,6 +1980,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         packagesDirectoryReplacementDuringStatus: URL? = nil,
         rootDirectoryMoveDestinationDuringFetch: URL? = nil,
         indexTouchedDuringUpdate: Bool = false,
+        finalIndexEntryOutput: String? = nil,
         statusError: PackageSyncError? = nil,
         statusOutput: String? = nil
     ) {
@@ -1974,6 +2003,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.packagesDirectoryReplacementDuringStatus = packagesDirectoryReplacementDuringStatus
         self.rootDirectoryMoveDestinationDuringFetch = rootDirectoryMoveDestinationDuringFetch
         self.indexTouchedDuringUpdate = indexTouchedDuringUpdate
+        self.finalIndexEntryOutput = finalIndexEntryOutput
         self.statusError = statusError
         self.statusOutput = statusOutput
         let unchangedObjectID = String(repeating: "0", count: 40)
@@ -2019,7 +2049,14 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
                     encoding: .utf8
                 )
             }
-            return didRestorePackageList ? restoredPackageListIndexEntryOutput : indexEntryOutput
+            if didRestorePackageList {
+                restoredIndexReadCount += 1
+                if restoredIndexReadCount > 1, let finalIndexEntryOutput {
+                    return finalIndexEntryOutput
+                }
+                return restoredPackageListIndexEntryOutput
+            }
+            return indexEntryOutput
         }
         if arguments.contains("ls-tree") {
             return headEntryOutput
