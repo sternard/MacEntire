@@ -25,6 +25,33 @@ final class PackageWorkspaceTests: XCTestCase {
         XCTAssertEqual(packages.first?.state, .notInstalled)
     }
 
+    func testEmptyCatalogPreservesSynchronizationStatus() {
+        XCTAssertEqual(
+            refreshedPackageCatalogStatusMessage(
+                currentMessage: "MacEntire updated — quit and run scripts/install-app.sh to install it",
+                packagesAreEmpty: true
+            ),
+            "MacEntire updated — quit and run scripts/install-app.sh to install it"
+        )
+        XCTAssertEqual(
+            refreshedPackageCatalogStatusMessage(
+                currentMessage: "MacEntire: Update failed",
+                packagesAreEmpty: true
+            ),
+            "MacEntire: Update failed"
+        )
+    }
+
+    func testEmptyCatalogReportsNoPackagesWithoutOperationStatus() {
+        XCTAssertEqual(
+            refreshedPackageCatalogStatusMessage(
+                currentMessage: nil,
+                packagesAreEmpty: true
+            ),
+            "No packages configured"
+        )
+    }
+
     func testReadyPackageLaunchIsDisabledWhileSynchronizing() {
         let definition = PackageDefinition(
             repositoryURL: URL(string: "https://github.com/sternard/Storage-Assistant")!,

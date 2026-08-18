@@ -189,11 +189,10 @@ private final class PackageCatalog: ObservableObject {
                 packages = inspectedPackages.sorted {
                     $0.definition.displayName.localizedCaseInsensitiveCompare($1.definition.displayName) == .orderedAscending
                 }
-                if packages.isEmpty {
-                    statusMessage = "No packages configured"
-                } else if statusMessage == "No packages configured" {
-                    statusMessage = nil
-                }
+                statusMessage = refreshedPackageCatalogStatusMessage(
+                    currentMessage: statusMessage,
+                    packagesAreEmpty: packages.isEmpty
+                )
             } catch {
                 guard generation == refreshGeneration else {
                     return

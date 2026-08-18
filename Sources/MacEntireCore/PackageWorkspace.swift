@@ -70,6 +70,16 @@ public struct ManagedPackage: Identifiable, Equatable, Sendable {
     }
 }
 
+public func refreshedPackageCatalogStatusMessage(
+    currentMessage: String?,
+    packagesAreEmpty: Bool
+) -> String? {
+    if packagesAreEmpty {
+        return currentMessage ?? "No packages configured"
+    }
+    return currentMessage == "No packages configured" ? nil : currentMessage
+}
+
 public struct PackageWorkspace: Sendable {
     public let rootDirectory: URL
     public let packageListURL: URL
