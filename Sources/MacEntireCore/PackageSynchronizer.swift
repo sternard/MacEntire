@@ -513,7 +513,6 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 )
                 packageListWasEditedDuringUpdate = !packageListStatus.isEmpty
             } catch {
-                packageListWasEditedDuringUpdate = true
                 restorationError = error
             }
         }
