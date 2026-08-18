@@ -29,7 +29,7 @@ public func packageLaunchCompletionMessage(
 public struct PackageLaunchStatusState: Equatable, Sendable {
     private var launchOrder: [UUID] = []
     private var messages: [UUID: String] = [:]
-    private var packageNames: [UUID: String] = [:]
+    private var packageIdentifiers: [UUID: String] = [:]
 
     public var message: String? {
         launchOrder.reversed().compactMap { messages[$0] }.first
@@ -38,15 +38,21 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
     public init() {}
 
     @discardableResult
-    public mutating func beginLaunch(packageName: String, identifier: UUID = UUID()) -> UUID {
-        let supersededLaunches = launchOrder.filter { packageNames[$0] == packageName }
+    public mutating func beginLaunch(
+        packageIdentifier: String,
+        packageName: String,
+        identifier: UUID = UUID()
+    ) -> UUID {
+        let supersededLaunches = launchOrder.filter {
+            packageIdentifiers[$0] == packageIdentifier
+        }
         for supersededIdentifier in supersededLaunches {
             removeLaunch(supersededIdentifier)
         }
         launchOrder.removeAll { $0 == identifier }
         launchOrder.append(identifier)
         messages[identifier] = "Launching \(packageName)…"
-        packageNames[identifier] = packageName
+        packageIdentifiers[identifier] = packageIdentifier
         return identifier
     }
 
@@ -54,7 +60,7 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
         identifier: UUID,
         result: Result<Void, PackageLaunchError>
     ) {
-        guard packageNames[identifier] != nil else {
+        guard packageIdentifiers[identifier] != nil else {
             return
         }
         if let message = packageLaunchCompletionMessage(for: result) {
@@ -65,7 +71,7 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
     }
 
     public mutating func failToStart(identifier: UUID, message: String) {
-        guard packageNames[identifier] != nil else {
+        guard packageIdentifiers[identifier] != nil else {
             return
         }
         messages[identifier] = message
@@ -73,7 +79,7 @@ public struct PackageLaunchStatusState: Equatable, Sendable {
 
     private mutating func removeLaunch(_ identifier: UUID) {
         messages[identifier] = nil
-        packageNames[identifier] = nil
+        packageIdentifiers[identifier] = nil
         launchOrder.removeAll { $0 == identifier }
     }
 }

@@ -271,7 +271,10 @@ private final class PackageCatalog: ObservableObject {
             return
         }
 
-        let launchIdentifier = launchStatusState.beginLaunch(packageName: package.displayName)
+        let launchIdentifier = launchStatusState.beginLaunch(
+            packageIdentifier: package.id,
+            packageName: package.displayName
+        )
         publishOperationStatus(launchStatusState.message)
 
         do {

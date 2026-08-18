@@ -23,8 +23,8 @@ final class PackageLauncherTests: XCTestCase {
         let firstIdentifier = UUID()
         let secondIdentifier = UUID()
         var status = PackageLaunchStatusState()
-        status.beginLaunch(packageName: "First App", identifier: firstIdentifier)
-        status.beginLaunch(packageName: "Second App", identifier: secondIdentifier)
+        status.beginLaunch(packageIdentifier: "first", packageName: "First App", identifier: firstIdentifier)
+        status.beginLaunch(packageIdentifier: "second", packageName: "Second App", identifier: secondIdentifier)
 
         status.completeLaunch(identifier: secondIdentifier, result: .success(()))
 
@@ -35,8 +35,8 @@ final class PackageLauncherTests: XCTestCase {
         let firstIdentifier = UUID()
         let secondIdentifier = UUID()
         var status = PackageLaunchStatusState()
-        status.beginLaunch(packageName: "First App", identifier: firstIdentifier)
-        status.beginLaunch(packageName: "Second App", identifier: secondIdentifier)
+        status.beginLaunch(packageIdentifier: "first", packageName: "First App", identifier: firstIdentifier)
+        status.beginLaunch(packageIdentifier: "second", packageName: "Second App", identifier: secondIdentifier)
         status.completeLaunch(
             identifier: secondIdentifier,
             result: .failure(.unsuccessfulExit(package: "Second App", status: 7, output: "failed"))
@@ -51,14 +51,14 @@ final class PackageLauncherTests: XCTestCase {
         let failedIdentifier = UUID()
         let retryIdentifier = UUID()
         var status = PackageLaunchStatusState()
-        status.beginLaunch(packageName: "Example App", identifier: failedIdentifier)
+        status.beginLaunch(packageIdentifier: "example", packageName: "Example App", identifier: failedIdentifier)
         status.completeLaunch(
             identifier: failedIdentifier,
             result: .failure(.unsuccessfulExit(package: "Example App", status: 7, output: "failed"))
         )
         XCTAssertEqual(status.message, "Example App launcher exited with status 7: failed")
 
-        status.beginLaunch(packageName: "Example App", identifier: retryIdentifier)
+        status.beginLaunch(packageIdentifier: "example", packageName: "Example App", identifier: retryIdentifier)
         status.completeLaunch(identifier: retryIdentifier, result: .success(()))
 
         XCTAssertNil(status.message)
@@ -68,8 +68,8 @@ final class PackageLauncherTests: XCTestCase {
         let firstIdentifier = UUID()
         let retryIdentifier = UUID()
         var status = PackageLaunchStatusState()
-        status.beginLaunch(packageName: "Example App", identifier: firstIdentifier)
-        status.beginLaunch(packageName: "Example App", identifier: retryIdentifier)
+        status.beginLaunch(packageIdentifier: "example", packageName: "Example App", identifier: firstIdentifier)
+        status.beginLaunch(packageIdentifier: "example", packageName: "Example App", identifier: retryIdentifier)
 
         status.completeLaunch(
             identifier: firstIdentifier,
@@ -78,6 +78,30 @@ final class PackageLauncherTests: XCTestCase {
         status.completeLaunch(identifier: retryIdentifier, result: .success(()))
 
         XCTAssertNil(status.message)
+    }
+
+    func testDistinctPackagesWithSameDisplayNameKeepIndependentStatus() {
+        let firstIdentifier = UUID()
+        let secondIdentifier = UUID()
+        var status = PackageLaunchStatusState()
+        status.beginLaunch(
+            packageIdentifier: "https://github.com/sternard/foo-bar",
+            packageName: "Foo Bar",
+            identifier: firstIdentifier
+        )
+        status.beginLaunch(
+            packageIdentifier: "https://github.com/sternard/foo_bar",
+            packageName: "Foo Bar",
+            identifier: secondIdentifier
+        )
+
+        status.completeLaunch(
+            identifier: firstIdentifier,
+            result: .failure(.unsuccessfulExit(package: "Foo Bar", status: 7, output: "failed"))
+        )
+        status.completeLaunch(identifier: secondIdentifier, result: .success(()))
+
+        XCTAssertEqual(status.message, "Foo Bar launcher exited with status 7: failed")
     }
 
     func testReportsNonzeroLauncherExitWithCapturedOutput() throws {
