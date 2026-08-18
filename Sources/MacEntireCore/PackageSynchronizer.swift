@@ -636,11 +636,11 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 ],
                 description: "Prepare MacEntire update"
             )
+            preservePostFetchCheckoutState = true
             _ = try gitRunner.run(
                 ["-C", rootDirectory.path, "fetch"],
                 description: "Fetch MacEntire"
             )
-            preservePostFetchCheckoutState = true
             let branchAfterFetch = try gitRunner.run(
                 ["-C", rootDirectory.path, "branch", "--show-current"],
                 description: "Revalidate MacEntire branch"

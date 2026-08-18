@@ -127,6 +127,45 @@ final class PackageSynchronizerTests: XCTestCase {
         })
     }
 
+    func testMacEntireUpdatePreservesCheckoutStateWhenFetchFailsAfterBranchChange() throws {
+        let packageList = try writePackageList("original branch customization\n")
+        let fetchError = PackageSyncError.commandFailed(
+            command: "Fetch MacEntire",
+            output: "network unavailable"
+        )
+        let git = MacEntireUpdateGitRunner(
+            rootDirectory: temporaryRoot,
+            packageListURL: packageList,
+            updatedPackageList: "upstream package list\n",
+            fetchError: fetchError,
+            packageListEditDuringFetch: "new branch package list\n"
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronizeMacEntire()
+        ) { error in
+            guard case .packageListRecoveryRequired(let reason, let location) =
+                error as? PackageSyncError
+            else {
+                return XCTFail("Expected a package-list recovery error")
+            }
+            XCTAssertEqual(reason, fetchError.localizedDescription)
+            XCTAssertEqual(
+                try? Data(
+                    contentsOf: URL(fileURLWithPath: location, isDirectory: true)
+                        .appendingPathComponent("packages.txt.worktree")
+                ),
+                Data("original branch customization\n".utf8)
+            )
+        }
+
+        XCTAssertEqual(try String(contentsOf: packageList), "new branch package list\n")
+        XCTAssertFalse(git.commands.contains { $0.contains("merge") })
+    }
+
     func testMacEntireUpdatePreservesNewManifestWhenHeadChangesDuringFetch() throws {
         let packageList = try writePackageList("original customization\n")
         let git = MacEntireUpdateGitRunner(
@@ -1478,6 +1517,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
     private let packageListURL: URL
     private let updatedPackageList: String
     private let updateError: PackageSyncError?
+    private let fetchError: PackageSyncError?
     private let indexEntryOutput: String
     private let headEntryOutput: String
     private let originalRevision: String
@@ -1502,6 +1542,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         packageListURL: URL,
         updatedPackageList: String,
         updateError: PackageSyncError? = nil,
+        fetchError: PackageSyncError? = nil,
         indexEntryOutput: String? = nil,
         headEntryOutput: String? = nil,
         originalRevision: String = "old-revision",
@@ -1522,6 +1563,7 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
         self.packageListURL = packageListURL
         self.updatedPackageList = updatedPackageList
         self.updateError = updateError
+        self.fetchError = fetchError
         self.originalRevision = originalRevision
         self.revisionAfterFetch = revisionAfterFetch
         self.updatedRevision = updatedRevision
@@ -1599,6 +1641,9 @@ private final class MacEntireUpdateGitRunner: GitRunning, @unchecked Sendable {
                     atomically: true,
                     encoding: .utf8
                 )
+            }
+            if let fetchError {
+                throw fetchError
             }
         }
         if arguments.contains("merge") {
