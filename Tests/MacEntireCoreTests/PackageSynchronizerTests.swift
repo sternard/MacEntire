@@ -1414,6 +1414,40 @@ final class PackageSynchronizerTests: XCTestCase {
         XCTAssertEqual(git.commands[0].suffix(2), ["rev-parse", "--show-toplevel"])
     }
 
+    func testRefusesCheckoutWhoseGitMetadataEscapesTheCheckout() throws {
+        let package = try makeInstalledPackage()
+        let gitDirectory = package.directoryURL.appendingPathComponent(".git", isDirectory: true)
+        let externalGitDirectory = temporaryRoot.appendingPathComponent(
+            "External-Example-App.git",
+            isDirectory: true
+        )
+        try FileManager.default.moveItem(at: gitDirectory, to: externalGitDirectory)
+        try FileManager.default.createSymbolicLink(
+            at: gitDirectory,
+            withDestinationURL: externalGitDirectory
+        )
+        let git = FakeGitRunner(
+            gitDirectoryOutput: externalGitDirectory.path,
+            statusOutput: ""
+        )
+
+        XCTAssertThrowsError(
+            try PackageSynchronizer(
+                workspace: PackageWorkspace(rootDirectory: temporaryRoot),
+                gitRunner: git
+            ).synchronize(package)
+        ) { error in
+            XCTAssertEqual(
+                error as? PackageSyncError,
+                .gitMetadataOutsideCheckout("Example-App")
+            )
+        }
+        XCTAssertTrue(git.commands.contains {
+            $0.suffix(2) == ["rev-parse", "--absolute-git-dir"]
+        })
+        XCTAssertFalse(git.commands.contains { $0.contains("fetch") || $0.contains("merge") })
+    }
+
     func testUpdatesCheckoutUnderSymlinkedWorkspaceAncestor() throws {
         let physicalRoot = temporaryRoot.appendingPathComponent("PhysicalRoot", isDirectory: true)
         let linkedRoot = temporaryRoot.appendingPathComponent("LinkedRoot", isDirectory: true)
@@ -1957,6 +1991,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
     private let rawRemoteOutput: String?
     private let rawRemoteOutputAfterFetch: String?
     private let topLevelOutput: String?
+    private let gitDirectoryOutput: String?
     private let revisionOutput: String
     private let revisionOutputAfterFetch: String?
     private let currentBranchOutput: String
@@ -1970,6 +2005,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         rawRemoteOutput: String? = nil,
         rawRemoteOutputAfterFetch: String? = nil,
         topLevelOutput: String? = nil,
+        gitDirectoryOutput: String? = nil,
         revisionOutput: String = "current-revision",
         revisionOutputAfterFetch: String? = nil,
         currentBranchOutput: String = "main",
@@ -1981,6 +2017,7 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         self.rawRemoteOutput = rawRemoteOutput
         self.rawRemoteOutputAfterFetch = rawRemoteOutputAfterFetch
         self.topLevelOutput = topLevelOutput
+        self.gitDirectoryOutput = gitDirectoryOutput
         self.revisionOutput = revisionOutput
         self.revisionOutputAfterFetch = revisionOutputAfterFetch
         self.currentBranchOutput = currentBranchOutput
@@ -1993,6 +2030,9 @@ private final class FakeGitRunner: GitRunning, @unchecked Sendable {
         commands.append(arguments)
         if arguments.suffix(2) == ["rev-parse", "HEAD"] {
             return didFetch ? revisionOutputAfterFetch ?? revisionOutput : revisionOutput
+        }
+        if arguments.suffix(2) == ["rev-parse", "--absolute-git-dir"] {
+            return gitDirectoryOutput ?? "\(arguments[1])/.git"
         }
         if arguments.contains("rev-parse") {
             return topLevelOutput ?? arguments[1]

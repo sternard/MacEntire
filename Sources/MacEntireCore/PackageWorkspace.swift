@@ -324,6 +324,31 @@ public struct PackageWorkspace: Sendable {
                 )
             }
 
+            let resolvedGitDirectory: String
+            do {
+                resolvedGitDirectory = try gitRunner.run(
+                    ["-C", checkoutDirectory.path, "rev-parse", "--absolute-git-dir"],
+                    description: "Validate \(definition.repositoryName) Git metadata"
+                )
+            } catch {
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+            guard gitMetadataDirectoryMatchesCheckout(
+                URL(fileURLWithPath: resolvedGitDirectory, isDirectory: true),
+                checkoutDirectory: checkoutDirectoryHandle
+            ) else {
+                let error = PackageSyncError.gitMetadataOutsideCheckout(
+                    definition.repositoryName
+                )
+                return ManagedPackage(
+                    definition: definition,
+                    state: .unavailable(error.localizedDescription)
+                )
+            }
+
             let remoteOutput: String
             do {
                 remoteOutput = try gitRunner.run(

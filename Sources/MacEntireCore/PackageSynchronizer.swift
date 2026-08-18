@@ -90,6 +90,7 @@ public enum PackageSyncError: LocalizedError, Equatable {
     case branchMismatch(repository: String, expected: String, actual: String)
     case branchRevisionChanged(String)
     case detachedHead(String)
+    case gitMetadataOutsideCheckout(String)
     case localChanges(String)
     case missingLauncher(String)
     case nonExecutableLauncher(String)
@@ -117,6 +118,8 @@ public enum PackageSyncError: LocalizedError, Equatable {
             return "\(name) branch changed during update; update skipped."
         case .detachedHead(let name):
             return "\(name) has a detached HEAD; update skipped."
+        case .gitMetadataOutsideCheckout(let name):
+            return "\(name) Git metadata is outside its checkout; update skipped."
         case .localChanges(let name):
             return "\(name) has local changes; update skipped."
         case .missingLauncher(let name):
@@ -1011,6 +1014,17 @@ public final class PackageSynchronizer: @unchecked Sendable {
                 throw PackageSyncError.destinationIsNotRepository(package.repositoryName)
             }
 
+            let resolvedGitDirectory = try gitRunner.run(
+                ["-C", checkoutURL.path, "rev-parse", "--absolute-git-dir"],
+                description: "Validate \(package.repositoryName) Git metadata"
+            )
+            guard gitMetadataDirectoryMatchesCheckout(
+                URL(fileURLWithPath: resolvedGitDirectory, isDirectory: true),
+                checkoutDirectory: checkoutDirectory
+            ) else {
+                throw PackageSyncError.gitMetadataOutsideCheckout(package.repositoryName)
+            }
+
             let remoteOutput = try gitRunner.run(
                 ["-C", checkoutURL.path, "config", "--get-all", "remote.origin.url"],
                 description: "Read \(package.repositoryName) origin"
@@ -1211,6 +1225,22 @@ final class StableDirectoryHandle: @unchecked Sendable {
         }
         return metadata.st_dev == device && metadata.st_ino == inode
     }
+}
+
+func gitMetadataDirectoryMatchesCheckout(
+    _ resolvedGitDirectory: URL,
+    checkoutDirectory: StableDirectoryHandle
+) -> Bool {
+    let descriptor = openat(
+        checkoutDirectory.descriptor,
+        ".git",
+        O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+    )
+    guard descriptor >= 0,
+          let gitDirectory = try? StableDirectoryHandle(descriptor: descriptor) else {
+        return false
+    }
+    return gitDirectory.matches(resolvedGitDirectory)
 }
 
 func openStableDirectory(_ directoryURL: URL) throws -> StableDirectoryHandle {

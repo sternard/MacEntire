@@ -583,6 +583,46 @@ final class PackageWorkspaceTests: XCTestCase {
         )
     }
 
+    func testReportsRepositoryWithEscapedGitMetadataAsUnavailable() throws {
+        try writePackageList("https://github.com/sternard/Storage-Assistant")
+        let repository = temporaryRoot.appendingPathComponent(
+            "Packages/Storage-Assistant",
+            isDirectory: true
+        )
+        let gitDirectory = repository.appendingPathComponent(".git", isDirectory: true)
+        let externalGitDirectory = temporaryRoot.appendingPathComponent(
+            "External-Storage-Assistant.git",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: gitDirectory,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: repository.appendingPathComponent("scripts", isDirectory: true),
+            withIntermediateDirectories: true
+        )
+        try writeExecutableWorkspaceLauncher(
+            at: repository.appendingPathComponent("scripts/run-app.sh")
+        )
+        try FileManager.default.moveItem(at: gitDirectory, to: externalGitDirectory)
+        try FileManager.default.createSymbolicLink(
+            at: gitDirectory,
+            withDestinationURL: externalGitDirectory
+        )
+
+        let packages = try PackageWorkspace(rootDirectory: temporaryRoot).packages(
+            gitRunner: WorkspaceGitRunner(gitDirectory: externalGitDirectory.path)
+        )
+
+        XCTAssertEqual(
+            packages.first?.state,
+            .unavailable(
+                "Storage-Assistant Git metadata is outside its checkout; update skipped."
+            )
+        )
+    }
+
     func testReportsRepositoryUnderSymlinkedWorkspaceAncestorAsReady() throws {
         let physicalRoot = temporaryRoot.appendingPathComponent("PhysicalRoot", isDirectory: true)
         let linkedRoot = temporaryRoot.appendingPathComponent("LinkedRoot", isDirectory: true)
@@ -770,6 +810,9 @@ private final class ReplacingWorkspaceGitRunner: GitRunning, @unchecked Sendable
         if shouldReplace {
             try replacement()
         }
+        if arguments.suffix(2) == ["rev-parse", "--absolute-git-dir"] {
+            return "\(arguments[1])/.git"
+        }
         if arguments.contains("rev-parse") {
             return arguments[1]
         }
@@ -805,21 +848,27 @@ private struct WorkspaceGitRunner: GitRunning {
     let remote: String
     let rawRemote: String?
     let topLevel: String?
+    let gitDirectory: String?
     let currentBranch: String
 
     init(
         remote: String = "https://github.com/sternard/Storage-Assistant.git",
         rawRemote: String? = nil,
         topLevel: String? = nil,
+        gitDirectory: String? = nil,
         currentBranch: String = "develop"
     ) {
         self.remote = remote
         self.rawRemote = rawRemote
         self.topLevel = topLevel
+        self.gitDirectory = gitDirectory
         self.currentBranch = currentBranch
     }
 
     func run(_ arguments: [String], description: String) throws -> String {
+        if arguments.suffix(2) == ["rev-parse", "--absolute-git-dir"] {
+            return gitDirectory ?? "\(arguments[1])/.git"
+        }
         if arguments.contains("rev-parse") {
             return topLevel ?? arguments[1]
         }
